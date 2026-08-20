@@ -36,6 +36,10 @@ public sealed record ControlStatus
     public double? CpuLoad { get; init; }
     public double? GpuLoad { get; init; }
 
+    /// <summary>Package power draw. Null when the platform will not report it.</summary>
+    public double? CpuWatts { get; init; }
+    public double? GpuWatts { get; init; }
+
     public int CpuFanTargetRpm { get; init; }
     public int GpuFanTargetRpm { get; init; }
     public int CpuFanMeasuredRpm { get; init; }

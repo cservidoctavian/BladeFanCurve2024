@@ -54,6 +54,16 @@ public sealed class ControlLoop : IDisposable
     public ControlStatus Status { get; private set; } = new();
     public string ProbeLog { get; private set; } = "(not probed yet)";
 
+    /// <summary>
+    /// Rolling 30-minute record of package power. Owned here rather than by the window
+    /// so it keeps filling while the app sits in the tray.
+    /// </summary>
+    public PowerHistory PowerHistory { get; } = new();
+
+    /// <summary>The loop's monotonic clock, so sample ages are measured against the
+    /// same time base that recorded them.</summary>
+    public double ElapsedSeconds => _clock.Elapsed.TotalSeconds;
+
     /// <summary>Keyboard lighting, once a device has been found. Null when unavailable.</summary>
     public LightingEngine? Lighting { get; private set; }
 
@@ -196,8 +206,11 @@ public sealed class ControlLoop : IDisposable
         }
 
         // A profile is more than its curves, so switching one also moves the
-        // performance mode, the Windows power plan and the refresh rate.
-        if (profileChanged && _device is { IsConnected: true })
+        // performance mode, the Windows power plan and the refresh rate. This is not
+        // gated on the Razer device: the power plan, the power-mode slider and the
+        // refresh rate are all Windows-side and must still apply when the controller
+        // is missing.
+        if (profileChanged)
         {
             try { ApplyProfilePower(config); }
             catch (Exception ex) { Log.Warn($"Could not apply profile power settings: {ex.Message}"); }
@@ -262,6 +275,7 @@ public sealed class ControlLoop : IDisposable
         _cycle++;
 
         var snapshot = _sensors.Poll();
+        PowerHistory.Add(_clock.Elapsed.TotalSeconds, snapshot.CpuWatts, snapshot.GpuWatts);
 
         // A diagnostic is driving the fans directly; stay out of its way.
         if (_diagnosticsBusy)
@@ -324,6 +338,9 @@ public sealed class ControlLoop : IDisposable
             AttachPower(device, cfg);
             AttachLighting(device, cfg);
         }
+
+        // ---- power source ---------------------------------------------------
+        CheckPowerSource(cfg);
 
         // ---- battery policy -------------------------------------------------
         if (cfg.Safety.RevertToAutoOnBattery && OnBattery())
@@ -431,12 +448,20 @@ public sealed class ControlLoop : IDisposable
             floor = Math.Max(a, b);
         }
 
+        // ---- thermal spin-up guard --------------------------------------------
+        // Applies to both fans whenever *either* package is hot, and outranks a
+        // manual override as well as the curves. Without this a 0 RPM floor would
+        // let the machine sit silently and cook.
+        var spinFloor = SpinUpFloor(cfg, cpuTemp.Value, snapshot.HasGpu ? gpuTemp : cpuTemp.Value, now);
+        floor = Math.Max(floor, spinFloor);
+
         int cpuRpm, gpuRpm;
         ControlMode mode;
 
         if (overrideRpm is { } fixedRpm && !critical)
         {
-            var flat = FanCurveEvaluator.Quantise(fixedRpm, cfg.Safety.MinRpm, cfg.Safety.MaxRpm);
+            var asked = FanCurveEvaluator.Quantise(fixedRpm, cfg.Safety.MinRpm, cfg.Safety.MaxRpm);
+            var flat = Math.Max(asked, spinFloor);
             cpuRpm = _cpuFan.Compute(cpuTemp.Value, FanCurveConfig.Flat(flat), cfg.Safety, cfg.Tuning, dt, flat, false);
             gpuRpm = _gpuFan.Compute(gpuTemp, FanCurveConfig.Flat(flat), cfg.Safety, cfg.Tuning, dt, flat, false);
             mode = ControlMode.Override;
@@ -467,6 +492,39 @@ public sealed class ControlLoop : IDisposable
         }
 
         Publish(cfg, mode, snapshot, critical ? "Critical temperature — fans at maximum." : null);
+    }
+
+    private bool _spinUpEngaged;
+
+    /// <summary>
+    /// The RPM floor the thermal guard is currently demanding, or 0 when it is not
+    /// engaged. Hysteresis keeps it from chattering on and off at the threshold: it
+    /// engages at the set temperature and does not let go until the machine has cooled
+    /// by the release margin.
+    /// </summary>
+    public int SpinUpFloor(AppConfig cfg, double cpuTemp, double gpuTemp, double now)
+    {
+        if (!cfg.Safety.SpinUpEnabled) { _spinUpEngaged = false; return 0; }
+
+        var hottest = Math.Max(cpuTemp, gpuTemp);
+        var required = FanCurveEvaluator.SpinUpRpm(cfg.Safety);
+
+        if (hottest >= cfg.Safety.SpinUpTempC)
+        {
+            if (!_spinUpEngaged)
+            {
+                _spinUpEngaged = true;
+                Log.Info($"Thermal guard engaged at {hottest:0.0}°C — both fans held at " +
+                         $"{cfg.Safety.SpinUpPercent}% ({required} RPM).");
+            }
+        }
+        else if (_spinUpEngaged && hottest < cfg.Safety.SpinUpTempC - cfg.Safety.SpinUpReleaseMarginC)
+        {
+            _spinUpEngaged = false;
+            Log.Info($"Thermal guard released at {hottest:0.0}°C.");
+        }
+
+        return _spinUpEngaged ? required : 0;
     }
 
     private bool SendIfNeeded(FanChannel channel, int rpm, AppConfig cfg, bool force)
@@ -579,37 +637,59 @@ public sealed class ControlLoop : IDisposable
         var sb = new StringBuilder();
         _lastAppliedProfile = profile.Name;
 
-        // ---- Razer performance mode -------------------------------------
+        // ---- Razer performance mode and boost ---------------------------
+        //
+        // These two are one decision, not two. The controller only honours boost
+        // levels while it is in Custom mode, so a profile that wants a specific CPU
+        // and GPU power level has to select Custom first. If this firmware has no
+        // boost commands, Custom would strand the machine on whatever Custom happens
+        // to default to, so the profile's named fallback mode is used instead.
         var device = _device;
+        var razerPower = Power;
+        var boostAvailable = razerPower is { SupportsBoost: true };
+
         if (device is { IsConnected: true } && !string.IsNullOrWhiteSpace(power.PerfMode))
         {
-            var mode = EffectivePerfMode(cfg);
+            var wantsCustom = power.PerfMode.Equals("Custom", StringComparison.OrdinalIgnoreCase);
+            var usingFallback = wantsCustom && !boostAvailable
+                                            && Enum.TryParse<PerfMode>(power.FallbackPerfMode, true, out _);
+
+            var mode = usingFallback
+                ? Enum.Parse<PerfMode>(power.FallbackPerfMode, true)
+                : EffectivePerfMode(cfg);
+
             var ok = true;
             foreach (var zone in new[] { FanZone.Cpu, FanZone.Gpu })
                 ok &= device.SetPerfMode(zone, mode, _manualEngaged);
 
             sb.AppendLine(ok
-                ? $"performance mode: {mode}"
+                ? usingFallback
+                    ? $"performance mode: {mode} (Custom needs boost support this firmware lacks)"
+                    : $"performance mode: {mode}"
                 : $"performance mode: {mode} — device did not acknowledge");
-        }
 
-        // ---- CPU / GPU boost --------------------------------------------
-        var razerPower = Power;
-        if (razerPower is { SupportsBoost: true })
-        {
-            if (Enum.TryParse<BoostLevel>(power.CpuBoost, true, out var cpuBoost))
-                sb.AppendLine(razerPower.SetBoost(BoostTarget.Cpu, cpuBoost)
-                    ? $"cpu boost: {cpuBoost}"
-                    : $"cpu boost: {cpuBoost} — rejected or did not stick");
+            // Boost is only meaningful once Custom is actually in effect.
+            if (wantsCustom && boostAvailable && ok)
+            {
+                if (Enum.TryParse<BoostLevel>(power.CpuBoost, true, out var cpuBoost))
+                    sb.AppendLine(razerPower!.SetBoost(BoostTarget.Cpu, cpuBoost)
+                        ? $"cpu power: {cpuBoost}"
+                        : $"cpu power: {cpuBoost} — rejected or did not stick");
 
-            if (Enum.TryParse<BoostLevel>(power.GpuBoost, true, out var gpuBoost))
-                sb.AppendLine(razerPower.SetBoost(BoostTarget.Gpu, gpuBoost)
-                    ? $"gpu boost: {gpuBoost}"
-                    : $"gpu boost: {gpuBoost} — rejected or did not stick");
+                if (Enum.TryParse<BoostLevel>(power.GpuBoost, true, out var gpuBoost))
+                    sb.AppendLine(razerPower!.SetBoost(BoostTarget.Gpu, gpuBoost)
+                        ? $"gpu power: {gpuBoost}"
+                        : $"gpu power: {gpuBoost} — rejected or did not stick");
+            }
+            else if (!wantsCustom && !string.IsNullOrWhiteSpace(power.CpuBoost))
+            {
+                sb.AppendLine("cpu/gpu power levels ignored — the controller only honours "
+                            + "them in Custom mode");
+            }
         }
-        else if (!string.IsNullOrWhiteSpace(power.CpuBoost))
+        else if (!string.IsNullOrWhiteSpace(power.PerfMode))
         {
-            sb.AppendLine("cpu/gpu boost: not exposed by this firmware, skipped");
+            sb.AppendLine("performance mode: skipped, no Razer controller connected");
         }
 
         // ---- Windows power scheme and overlay ---------------------------
@@ -710,6 +790,102 @@ public sealed class ControlLoop : IDisposable
 
     // ---------------------------------------------------------------- helpers
 
+    // -------------------------------------------------------- power source
+
+    /// <summary>Raised when the charger coming or going has changed the profile.</summary>
+    public event Action<string, string>? ProfileAutoSwitched;
+
+    private bool? _onBattery;
+    private bool _lastPowerReading;
+    private int _agreeingReads;
+
+    /// <summary>
+    /// Watches for the charger going in or coming out and moves the profile with it.
+    ///
+    /// Two consecutive agreeing reads are required before acting. The status can
+    /// report a momentary transitional value while the supply settles, and switching
+    /// profile writes config, changes the Windows power plan and can change the
+    /// refresh rate — far too much to do on a glitch.
+    /// </summary>
+    private void CheckPowerSource(AppConfig cfg)
+    {
+        var reading = OnBattery();
+
+        if (reading == _lastPowerReading)
+        {
+            _agreeingReads++;
+        }
+        else
+        {
+            _lastPowerReading = reading;
+            _agreeingReads = 1;
+        }
+
+        if (_agreeingReads < 2) return;
+        if (_onBattery == reading) return;
+
+        var firstObservation = _onBattery is null;
+        _onBattery = reading;
+
+        var active = cfg.GetActiveProfile().Name;
+        var outcome = AutoProfileDecision.Decide(firstObservation, reading, cfg.Automation, active);
+
+        switch (outcome.Action)
+        {
+            case AutoProfileAction.SwitchToBattery:
+                // Remember where we came from before moving, so plugging back in can undo it.
+                cfg.Automation.ProfileBeforeBattery = active;
+                SwitchProfile(cfg, outcome.Target, outcome.Reason);
+                break;
+
+            case AutoProfileAction.RestorePrevious:
+                SwitchProfile(cfg, outcome.Target, outcome.Reason);
+                cfg.Automation.ProfileBeforeBattery = "";
+                break;
+
+            case AutoProfileAction.ForgetPrevious:
+                Log.Info($"Charger plugged in, but '{active}' {outcome.Reason} — leaving it.");
+                cfg.Automation.ProfileBeforeBattery = "";
+                ConfigStore.Save(cfg);
+                break;
+
+            case AutoProfileAction.None:
+            default:
+                break;
+        }
+    }
+
+    private void SwitchProfile(AppConfig cfg, string name, string reason)
+    {
+        var target = cfg.Profiles.FirstOrDefault(p =>
+            p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+        if (target == null)
+        {
+            Log.Warn($"Cannot switch profile ({reason}): there is no profile called '{name}'.");
+            return;
+        }
+
+        if (cfg.ActiveProfile.Equals(target.Name, StringComparison.Ordinal)) return;
+
+        cfg.ActiveProfile = target.Name;
+        Log.Info($"Switched to '{target.Name}' — {reason}.");
+
+        lock (_lock)
+        {
+            _cpuFan.MarkSent(-1);
+            _gpuFan.MarkSent(-1);
+        }
+
+        try { ApplyProfilePower(cfg); }
+        catch (Exception ex) { Log.Warn($"Profile power settings failed: {ex.Message}"); }
+
+        ConfigStore.Save(cfg);
+
+        try { ProfileAutoSwitched?.Invoke(target.Name, reason); }
+        catch { /* a UI handler must not break the loop */ }
+    }
+
     private static bool OnBattery()
     {
         try
@@ -758,6 +934,8 @@ public sealed class ControlLoop : IDisposable
             GpuTempC = snapshot.HasGpu ? snapshot.GpuTemp : null,
             CpuLoad = snapshot.CpuLoad,
             GpuLoad = snapshot.GpuLoad,
+            CpuWatts = snapshot.CpuWatts,
+            GpuWatts = snapshot.GpuWatts,
             CpuFanTargetRpm = _cpuFan.CommandedRpm,
             GpuFanTargetRpm = _gpuFan.CommandedRpm,
             CpuFanMeasuredRpm = _cpuFan.MeasuredRpm,

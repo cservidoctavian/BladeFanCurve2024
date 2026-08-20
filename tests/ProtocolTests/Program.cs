@@ -91,6 +91,35 @@ internal static class Program
         ScheduleHandlesMidnightWrap();
         ScheduleIsOffWhenDisabledOrEmpty();
 
+        Section("Profile power levels");
+        SilentBalancedAndPerformanceDifferInPower();
+        BoostOnlyMeansSomethingInCustomMode();
+        OldConfigsAdoptTheShippedPowerSettings();
+        CustomisedProfilesAreNotOverwrittenByMigration();
+
+        Section("Fans off and the thermal guard");
+        ZeroFloorIsAllowedThroughTheWholeChain();
+        StoppedFanStillRampsInsteadOfJumping();
+        GuardComputesFiftyPercentOfMaximum();
+        GuardOutranksCurveAndOverride();
+        CriticalStillOutranksTheGuard();
+
+        Section("Battery profile switching");
+        UnpluggingSwitchesToTheBatteryProfile();
+        PluggingBackInRestoresWhatWasThereBefore();
+        AHandPickedProfileOutranksTheAutomation();
+        StartupDoesNotUndoAnything();
+        SwitchingCanBeTurnedOffEntirely();
+        AlreadyOnTheBatteryProfileIsLeftAlone();
+
+        Section("Power history");
+        HistoryKeepsSamplesInChronologicalOrder();
+        HistoryDropsAnythingOlderThanTheWindow();
+        HistorySurvivesRingBufferWraparound();
+        HistoryPreservesGapsRatherThanInventingZero();
+        HistoryAveragesIgnoreGapsAndRespectTheWindow();
+        ImplausibleWattageIsRejected();
+
         Section("XAML styles");
         EveryStyleReferenceMatchesItsTargetType();
         EveryStyleReferenceResolves();
@@ -772,18 +801,18 @@ internal static class Program
         var cfg = AppConfig.CreateDefault();
         var names = cfg.Profiles.Select(p => p.Name).ToList();
 
-        Check("ships Silent, Balanced and Turbo",
-            names.Contains("Silent") && names.Contains("Balanced") && names.Contains("Turbo"));
+        Check("ships Silent, Balanced and Performance",
+            names.Contains("Silent") && names.Contains("Balanced") && names.Contains("Performance"));
 
         var silent = cfg.Profiles.First(p => p.Name == "Silent");
-        var turbo = cfg.Profiles.First(p => p.Name == "Turbo");
+        var turbo = cfg.Profiles.First(p => p.Name == "Performance");
 
-        Check("silent uses the low power target", silent.Power.PerfMode == "Balanced");
-        Check("turbo uses the high power target", turbo.Power.PerfMode == "Gaming");
+        Check("silent falls back to the low power target", silent.Power.FallbackPerfMode == "Balanced");
+        Check("performance falls back to the high power target", turbo.Power.FallbackPerfMode == "Gaming");
         Check("silent biases toward efficiency", silent.Power.PowerOverlay == "efficiency");
-        Check("turbo biases toward performance", turbo.Power.PowerOverlay == "performance");
+        Check("performance biases toward performance", turbo.Power.PowerOverlay == "performance");
         Check("silent drops the refresh rate", silent.Power.RefreshHz == 60);
-        Check("turbo leaves the refresh rate to the user", turbo.Power.RefreshHz == 0);
+        Check("performance leaves the refresh rate to the user", turbo.Power.RefreshHz == 0);
 
         foreach (var p in cfg.Profiles)
         {
@@ -877,6 +906,439 @@ internal static class Program
         Check("default warmth is a usable 3400 K", defaults.NightLightKelvin == 3400);
         Check("default window is 21:00 to 07:00",
             defaults.NightLightStartMinutes == 1260 && defaults.NightLightEndMinutes == 420);
+    }
+
+    // ------------------------------------------------------- profile power levels
+
+    /// <summary>
+    /// The point of the three profiles is that they ask the machine for different
+    /// amounts of CPU and GPU power. An earlier version set Silent and Balanced to the
+    /// same performance mode with boost levels the controller ignores outside Custom
+    /// mode, so they were in fact identical. That must not come back.
+    /// </summary>
+    private static void SilentBalancedAndPerformanceDifferInPower()
+    {
+        var cfg = AppConfig.CreateDefault();
+        var silent = cfg.Profiles.First(p => p.Name == "Silent").Power;
+        var balanced = cfg.Profiles.First(p => p.Name == "Balanced").Power;
+        var performance = cfg.Profiles.First(p => p.Name == "Performance").Power;
+
+        Check("ships Silent, Balanced and Performance", cfg.Profiles.Count == 3);
+
+        // Ordered lowest to highest, and every step must actually differ.
+        var order = new[] { "Low", "Medium", "Boost" };
+        Check("silent asks for the lowest cpu power", silent.CpuBoost == "Low");
+        Check("balanced asks for moderate cpu power", balanced.CpuBoost == "Medium");
+        Check("performance asks for maximum cpu power", performance.CpuBoost == "Boost");
+
+        Check("silent asks for the lowest gpu power", silent.GpuBoost == "Low");
+        Check("balanced asks for moderate gpu power", balanced.GpuBoost == "Medium");
+        Check("performance asks for maximum gpu power", performance.GpuBoost == "High");
+
+        Check("cpu levels are strictly increasing",
+            Array.IndexOf(order, silent.CpuBoost) < Array.IndexOf(order, balanced.CpuBoost)
+            && Array.IndexOf(order, balanced.CpuBoost) < Array.IndexOf(order, performance.CpuBoost));
+
+        Check("no two profiles request the same cpu/gpu pair",
+            new[] { silent, balanced, performance }
+                .Select(p => $"{p.CpuBoost}/{p.GpuBoost}").Distinct().Count() == 3);
+
+        // The fallback path must also separate them when boost is unavailable.
+        Check("fallbacks separate silent from performance",
+            silent.FallbackPerfMode != performance.FallbackPerfMode);
+        Check("performance falls back to the high power target",
+            performance.FallbackPerfMode == "Gaming");
+    }
+
+    private static void BoostOnlyMeansSomethingInCustomMode()
+    {
+        var cfg = AppConfig.CreateDefault();
+
+        foreach (var profile in cfg.Profiles)
+        {
+            var p = profile.Power;
+            if (string.IsNullOrEmpty(p.CpuBoost) && string.IsNullOrEmpty(p.GpuBoost)) continue;
+
+            Check($"{profile.Name} selects Custom so its power levels are honoured",
+                p.PerfMode.Equals("Custom", StringComparison.OrdinalIgnoreCase));
+            Check($"{profile.Name} names a fallback for firmware without boost",
+                !string.IsNullOrEmpty(p.FallbackPerfMode));
+            Check($"{profile.Name} fallback is a real mode",
+                Enum.TryParse<PerfMode>(p.FallbackPerfMode, true, out _));
+        }
+    }
+
+    private static void OldConfigsAdoptTheShippedPowerSettings()
+    {
+        // A version 2 config: profiles exist but carry no power settings at all.
+        var old = new AppConfig
+        {
+            Version = 2,
+            ActiveProfile = "Turbo",
+            Profiles =
+            {
+                new Profile { Name = "Silent", Power = new ProfilePower() },
+                new Profile { Name = "Balanced", Power = new ProfilePower() },
+                new Profile { Name = "Turbo", Power = new ProfilePower() },
+            }
+        };
+
+        ConfigStore.MigrateProfilePower(old);
+
+        Check("migration renames Turbo to Performance",
+            old.Profiles.Any(p => p.Name == "Performance") && old.Profiles.All(p => p.Name != "Turbo"));
+        Check("migration follows the active profile through the rename",
+            old.ActiveProfile == "Performance");
+        Check("migration fills in the silent power settings",
+            old.Profiles.First(p => p.Name == "Silent").Power.CpuBoost == "Low");
+        Check("migration fills in the performance power settings",
+            old.Profiles.First(p => p.Name == "Performance").Power.CpuBoost == "Boost");
+        Check("migration stamps the new version", old.Version == 3);
+
+        // Running it again must be a no-op rather than re-applying.
+        old.Profiles.First(p => p.Name == "Silent").Power.CpuBoost = "High";
+        ConfigStore.MigrateProfilePower(old);
+        Check("migration does not run twice",
+            old.Profiles.First(p => p.Name == "Silent").Power.CpuBoost == "High");
+    }
+
+    private static void CustomisedProfilesAreNotOverwrittenByMigration()
+    {
+        var tweaked = new AppConfig
+        {
+            Version = 2,
+            ActiveProfile = "Silent",
+            Profiles =
+            {
+                new Profile
+                {
+                    Name = "Silent",
+                    Power = new ProfilePower { PerfMode = "Gaming" }, // user chose this
+                },
+                new Profile { Name = "Balanced", Power = new ProfilePower() },
+            }
+        };
+
+        ConfigStore.MigrateProfilePower(tweaked);
+
+        Check("a profile the user has touched is left alone",
+            tweaked.Profiles.First(p => p.Name == "Silent").Power.PerfMode == "Gaming");
+        Check("an untouched profile beside it still gets defaults",
+            tweaked.Profiles.First(p => p.Name == "Balanced").Power.CpuBoost == "Medium");
+
+        // A profile with a name we do not ship must never be given someone else's settings.
+        var custom = new AppConfig
+        {
+            Version = 2,
+            Profiles = { new Profile { Name = "My Profile", Power = new ProfilePower() } }
+        };
+        ConfigStore.MigrateProfilePower(custom);
+        Check("an unrecognised profile name is left untouched",
+            custom.Profiles[0].Power.PerfMode == "");
+    }
+
+    // --------------------------------------------- fans off and the thermal guard
+
+    private static SafetySettings ZeroFloor() => new()
+    {
+        MinRpm = 0,
+        MaxRpm = 5000,
+        CpuCriticalC = 97,
+        GpuCriticalC = 88,
+        SpinUpEnabled = true,
+        SpinUpTempC = 70,
+        SpinUpPercent = 50,
+        SpinUpReleaseMarginC = 5,
+    };
+
+    private static void ZeroFloorIsAllowedThroughTheWholeChain()
+    {
+        var safety = ZeroFloor();
+        var curve = new FanCurveConfig { Points = { new CurvePoint(30, 0), new CurvePoint(90, 5000) } };
+
+        Check("a curve may ask for zero",
+            FanCurveEvaluator.Evaluate(curve, 30, safety.MinRpm, safety.MaxRpm) == 0);
+        Check("quantising zero keeps it at zero",
+            FanCurveEvaluator.Quantise(0, safety.MinRpm, safety.MaxRpm) == 0);
+        Check("sanitising a config does not push the floor back up",
+            SanitisedMinRpm(0) == 0);
+
+        // The wire encodes rpm/100 in one byte, so zero has to survive that too.
+        var report = RazerReport.Create(0x1F, 0x0D, 0x01, 0x03, 0x01, 0x01, 0);
+        Check("zero rpm encodes as 0x00 on the wire", report.ToBytes()[10] == 0x00);
+    }
+
+    private static int SanitisedMinRpm(int value)
+    {
+        var cfg = AppConfig.CreateDefault();
+        cfg.Safety.MinRpm = value;
+        ConfigStore.Save(cfg); // Save sanitises; the write itself is harmless here
+        return cfg.Safety.MinRpm;
+    }
+
+    /// <summary>
+    /// With a zero floor a stopped fan is a normal state, not an uninitialised one.
+    /// Treating it as uninitialised would let the fan jump straight to full speed.
+    /// </summary>
+    private static void StoppedFanStillRampsInsteadOfJumping()
+    {
+        var safety = ZeroFloor();
+        var tuning = new TuningSettings { RampUpRpmPerSec = 900, RampDownRpmPerSec = 250 };
+        var channel = new FanChannel(FanZone.Cpu, "test");
+        var flat = FanCurveConfig.Flat(0);
+
+        // Settle at a stop.
+        for (var i = 0; i < 20; i++) channel.Compute(40, flat, safety, tuning, 1.0, 0, false);
+        Check("the fan reaches a full stop", channel.CommandedRpm == 0);
+
+        // Now demand full speed for one second: the ramp must still apply.
+        var next = channel.Compute(40, FanCurveConfig.Flat(5000), safety, tuning, 1.0, 5000, false);
+        Check("coming off zero still ramps rather than jumping", next is > 0 and <= 1000);
+        Check("and it is heading the right way", next >= 900);
+    }
+
+    private static void GuardComputesFiftyPercentOfMaximum()
+    {
+        var safety = ZeroFloor();
+        Check("50% of 5000 is 2500", FanCurveEvaluator.SpinUpRpm(safety) == 2500);
+
+        safety.MaxRpm = 4800;
+        Check("50% of 4800 quantises to 2400", FanCurveEvaluator.SpinUpRpm(safety) == 2400);
+
+        safety.SpinUpPercent = 100;
+        Check("100% is the maximum", FanCurveEvaluator.SpinUpRpm(safety) == 4800);
+
+        safety.SpinUpPercent = 30;
+        Check("30% of 4800 quantises to 1400", FanCurveEvaluator.SpinUpRpm(safety) == 1400);
+    }
+
+    /// <summary>
+    /// The guard is a floor, not a target: it lifts a too-slow fan without capping a
+    /// curve that already wants more air.
+    /// </summary>
+    private static void GuardOutranksCurveAndOverride()
+    {
+        var safety = ZeroFloor();
+        var tuning = new TuningSettings { RampUpRpmPerSec = 100000, RampDownRpmPerSec = 100000 };
+        var channel = new FanChannel(FanZone.Cpu, "test");
+
+        // A curve asking for silence, with the guard demanding 2500.
+        var quiet = channel.Compute(75, FanCurveConfig.Flat(0), safety, tuning, 1.0, 2500, false);
+        Check("the guard lifts a stopped fan", quiet == 2500);
+
+        // A curve already asking for more must not be dragged down to the guard.
+        channel.Reset(0);
+        var loud = channel.Compute(75, FanCurveConfig.Flat(4000), safety, tuning, 1.0, 2500, false);
+        Check("the guard does not cap a faster curve", loud == 4000);
+    }
+
+    private static void CriticalStillOutranksTheGuard()
+    {
+        var safety = ZeroFloor();
+        var tuning = new TuningSettings { RampUpRpmPerSec = 100, RampDownRpmPerSec = 100 };
+        var channel = new FanChannel(FanZone.Cpu, "test");
+
+        var rpm = channel.Compute(98, FanCurveConfig.Flat(0), safety, tuning, 1.0, 2500, true);
+        Check("critical goes straight to maximum, past the guard", rpm == safety.MaxRpm);
+    }
+
+    // ------------------------------------------------- battery profile switching
+
+    private static AutomationSettings Auto(string before = "") => new()
+    {
+        SwitchProfileOnBattery = true,
+        BatteryProfile = "Silent",
+        RestoreProfileOnAc = true,
+        ProfileBeforeBattery = before,
+    };
+
+    private static void UnpluggingSwitchesToTheBatteryProfile()
+    {
+        var d = AutoProfileDecision.Decide(false, onBattery: true, Auto(), "Performance");
+        Check("unplugging switches profile", d.Action == AutoProfileAction.SwitchToBattery);
+        Check("it switches to the configured battery profile", d.Target == "Silent");
+        Check("the reason names the charger", d.Reason.Contains("unplugged"));
+    }
+
+    private static void PluggingBackInRestoresWhatWasThereBefore()
+    {
+        // On battery, sitting on Silent, having come from Performance.
+        var d = AutoProfileDecision.Decide(false, onBattery: false, Auto("Performance"), "Silent");
+        Check("plugging in restores", d.Action == AutoProfileAction.RestorePrevious);
+        Check("it restores the remembered profile", d.Target == "Performance");
+
+        // Nothing remembered means nothing to restore.
+        var none = AutoProfileDecision.Decide(false, onBattery: false, Auto(), "Silent");
+        Check("with nothing remembered it does nothing", none.Action == AutoProfileAction.None);
+
+        // Restoring can be switched off on its own.
+        var settings = Auto("Performance");
+        settings.RestoreProfileOnAc = false;
+        var off = AutoProfileDecision.Decide(false, onBattery: false, settings, "Silent");
+        Check("restore-on-ac can be disabled independently", off.Action == AutoProfileAction.None);
+    }
+
+    /// <summary>
+    /// The case that matters most: someone unplugs, gets Silent, decides they want
+    /// Performance anyway, then plugs in. Yanking them back would be infuriating.
+    /// </summary>
+    private static void AHandPickedProfileOutranksTheAutomation()
+    {
+        var d = AutoProfileDecision.Decide(false, onBattery: false, Auto("Balanced"), "Performance");
+        Check("a hand-picked profile is not overridden", d.Action == AutoProfileAction.ForgetPrevious);
+        Check("nothing is switched to", d.Target == "");
+        Check("the memory is dropped so it cannot fire later",
+            d.Action == AutoProfileAction.ForgetPrevious);
+    }
+
+    private static void StartupDoesNotUndoAnything()
+    {
+        // First reading, already plugged in: must not "restore" anything.
+        var onAc = AutoProfileDecision.Decide(true, onBattery: false, Auto("Performance"), "Silent");
+        Check("starting plugged in changes nothing", onAc.Action == AutoProfileAction.None);
+
+        // First reading, on battery: switching is right, the machine really is on battery.
+        var onBattery = AutoProfileDecision.Decide(true, onBattery: true, Auto(), "Performance");
+        Check("starting on battery does switch", onBattery.Action == AutoProfileAction.SwitchToBattery);
+        Check("the reason says so", onBattery.Reason.Contains("started on battery"));
+    }
+
+    private static void SwitchingCanBeTurnedOffEntirely()
+    {
+        var settings = Auto("Performance");
+        settings.SwitchProfileOnBattery = false;
+
+        Check("disabled means nothing happens on unplug",
+            AutoProfileDecision.Decide(false, true, settings, "Performance").Action == AutoProfileAction.None);
+        Check("disabled means nothing happens on plug-in",
+            AutoProfileDecision.Decide(false, false, settings, "Silent").Action == AutoProfileAction.None);
+
+        // A blank battery profile is not a licence to switch to nothing.
+        var blank = Auto();
+        blank.BatteryProfile = "";
+        Check("a blank battery profile is ignored",
+            AutoProfileDecision.Decide(false, true, blank, "Performance").Action == AutoProfileAction.None);
+    }
+
+    private static void AlreadyOnTheBatteryProfileIsLeftAlone()
+    {
+        // Unplugging while already on Silent must not record Silent as the profile to
+        // return to, or plugging in would restore Silent onto itself and lose the
+        // user's real starting point.
+        var d = AutoProfileDecision.Decide(false, onBattery: true, Auto(), "Silent");
+        Check("unplugging while already on the battery profile does nothing",
+            d.Action == AutoProfileAction.None);
+
+        // Case should not matter when comparing profile names.
+        var mixed = AutoProfileDecision.Decide(false, onBattery: true, Auto(), "silent");
+        Check("profile name matching ignores case", mixed.Action == AutoProfileAction.None);
+    }
+
+    // ------------------------------------------------------------- power history
+
+    private static void HistoryKeepsSamplesInChronologicalOrder()
+    {
+        var h = new PowerHistory();
+        for (var t = 0; t < 10; t++) h.Add(t, 10 + t, 20 + t);
+
+        var s = h.Snapshot(9);
+        Check("every sample is returned", s.Count == 10);
+        Check("oldest sample comes first", s[0].AgeSeconds > s[^1].AgeSeconds);
+        Check("the newest sample has age zero", Math.Abs(s[^1].AgeSeconds) < 0.001);
+        Check("the oldest sample is nine seconds back", Math.Abs(s[0].AgeSeconds - 9) < 0.001);
+        Check("values track their sample", Math.Abs((s[^1].CpuWatts ?? 0) - 19) < 0.001);
+        Check("peak is the highest value seen", Math.Abs(h.PeakWatts - 29) < 0.001);
+    }
+
+    private static void HistoryDropsAnythingOlderThanTheWindow()
+    {
+        var h = new PowerHistory();
+        h.Add(0, 50, 60);                              // will fall out of the window
+        h.Add(PowerHistory.WindowSeconds - 10, 11, 12); // still inside
+        h.Add(PowerHistory.WindowSeconds + 5, 13, 14);  // newest
+
+        var s = h.Snapshot(PowerHistory.WindowSeconds + 5);
+        Check("the sample past the window is dropped", s.Count == 2);
+        Check("the dropped sample's peak does not linger", Math.Abs(h.PeakWatts - 14) < 0.001);
+        Check("all surviving ages are inside the window",
+            s.All(x => x.AgeSeconds <= PowerHistory.WindowSeconds));
+    }
+
+    /// <summary>The buffer is exactly one window long, so writing past it must wrap.</summary>
+    private static void HistorySurvivesRingBufferWraparound()
+    {
+        var h = new PowerHistory();
+        var total = PowerHistory.WindowSeconds + 500;
+        for (var t = 0; t < total; t++) h.Add(t, t % 100, 50);
+
+        Check("count never exceeds the window", h.Count == PowerHistory.WindowSeconds);
+
+        var s = h.Snapshot(total - 1);
+        Check("the wrapped buffer still reads in order",
+            s.Select(x => x.AgeSeconds).SequenceEqual(s.Select(x => x.AgeSeconds).OrderByDescending(a => a)));
+        Check("the newest value survived the wrap",
+            Math.Abs((s[^1].CpuWatts ?? -1) - (total - 1) % 100) < 0.001);
+    }
+
+    private static void HistoryPreservesGapsRatherThanInventingZero()
+    {
+        var h = new PowerHistory();
+        h.Add(0, 30, 40);
+        h.Add(1, null, 41);   // CPU unreadable this tick
+        h.Add(2, 32, null);   // GPU asleep
+        h.Add(3, 33, 43);
+
+        var s = h.Snapshot(3);
+        Check("a missing cpu reading stays null", s[1].CpuWatts is null);
+        Check("a missing gpu reading stays null", s[2].GpuWatts is null);
+        Check("readings either side of a gap are intact",
+            s[0].CpuWatts is not null && s[3].CpuWatts is not null);
+
+        // Zero is not a real package power reading; it must be treated as absent so
+        // the line breaks instead of dropping to the floor.
+        var z = new PowerHistory();
+        z.Add(0, 0, 0);
+        var zs = z.Snapshot(0);
+        Check("a zero reading is treated as no reading",
+            zs[0].CpuWatts is null && zs[0].GpuWatts is null);
+    }
+
+    private static void HistoryAveragesIgnoreGapsAndRespectTheWindow()
+    {
+        var h = new PowerHistory();
+        h.Add(0, 100, 100);   // 120 s ago — outside a 60 s average
+        h.Add(90, 10, null);  //  30 s ago
+        h.Add(110, 20, null); //  10 s ago
+        h.Add(120, 30, null); //  now
+
+        var s = h.Snapshot(120);
+
+        var oneMinute = PowerHistory.Average(s, x => x.CpuWatts, 60);
+        Check("the average ignores samples outside its span",
+            oneMinute is not null && Math.Abs(oneMinute.Value - 20) < 0.001);
+
+        var everything = PowerHistory.Average(s, x => x.CpuWatts, PowerHistory.WindowSeconds);
+        Check("a wider span picks up the older sample",
+            everything is not null && Math.Abs(everything.Value - 40) < 0.001);
+
+        var gpu = PowerHistory.Average(s, x => x.GpuWatts, 60);
+        Check("an all-gap span averages to nothing rather than zero", gpu is null);
+    }
+
+    private static void ImplausibleWattageIsRejected()
+    {
+        Check("negative watts are rejected", !SensorSnapshot.PlausibleWatts(-5));
+        Check("zero watts is rejected", !SensorSnapshot.PlausibleWatts(0));
+        Check("a null reading is rejected", !SensorSnapshot.PlausibleWatts(null));
+        Check("400 W and above is rejected as a misread", !SensorSnapshot.PlausibleWatts(400));
+        Check("an idle 1.5 W is accepted", SensorSnapshot.PlausibleWatts(1.5));
+        Check("a loaded 54 W is accepted", SensorSnapshot.PlausibleWatts(54));
+        Check("a 140 W discrete gpu is accepted", SensorSnapshot.PlausibleWatts(140));
+
+        var snapshot = new SensorSnapshot(60, 55, 0.3, 0.4, TempSource.HardwareMonitor,
+            DateTime.UtcNow, 45.0, null);
+        Check("the snapshot reports a readable cpu wattage", snapshot.HasCpuWatts);
+        Check("the snapshot reports a missing gpu wattage", !snapshot.HasGpuWatts);
     }
 
     // -------------------------------------------------------------- xaml styles

@@ -111,16 +111,16 @@ public sealed class SensorService : IDisposable
             {
                 CpuSource = TempSource.AcpiThermalZone;
                 SourceExplanation =
-                    "The ring-0 driver LibreHardwareMonitor needs for AMD package temperature is not " +
-                    "present, so the CPU curve is running from an ACPI thermal zone instead. " +
-                    $"({_acpi.Status})";
+                    "CPU package temperature is unavailable, so the CPU curve is running from an " +
+                    $"ACPI thermal zone instead. ({_acpi.Status}) " +
+                    Platform.PawnIoStatus.Describe();
             }
             else
             {
                 CpuSource = TempSource.None;
                 SourceExplanation =
-                    "No CPU temperature source is available: the hardware monitor's kernel driver did " +
-                    $"not load and {_acpi.Status}. The CPU fan will follow the GPU instead.";
+                    $"No CPU temperature source is available: {_acpi.Status}. The CPU fan will follow " +
+                    "the GPU instead. " + Platform.PawnIoStatus.Describe();
             }
         }
     }
@@ -136,12 +136,14 @@ public sealed class SensorService : IDisposable
                 _computer.Accept(_visitor);
 
                 double? gpuTemp = null, cpuLoad = null, gpuLoad = null;
+                double? cpuWatts = null, gpuWatts = null;
 
                 foreach (var hw in _computer.Hardware)
                 {
                     if (hw.HardwareType == HardwareType.Cpu)
                     {
                         cpuLoad ??= PickLoad(hw, "CPU Total");
+                        cpuWatts ??= PickPower(hw, CpuPowerNames);
                     }
                     else if (GpuTypes.Contains(hw.HardwareType))
                     {
@@ -151,12 +153,22 @@ public sealed class SensorService : IDisposable
                             gpuTemp = t;
                             gpuLoad = PickLoad(hw, "GPU Core");
                         }
+
+                        // The discrete GPU is the one worth charting; integrated
+                        // graphics report a share of the CPU package instead.
+                        var w = PickPower(hw, GpuPowerNames);
+                        if (w is not null && (gpuWatts is null || hw.HardwareType == HardwareType.GpuNvidia))
+                            gpuWatts = w;
                     }
                 }
 
                 var (cpuTemp, source) = ReadCpuTemperature(gpuTemp);
 
-                return new SensorSnapshot(cpuTemp, gpuTemp, cpuLoad, gpuLoad, source, DateTime.UtcNow);
+                _sawCpuWatts |= SensorSnapshot.PlausibleWatts(cpuWatts);
+                _sawGpuWatts |= SensorSnapshot.PlausibleWatts(gpuWatts);
+
+                return new SensorSnapshot(cpuTemp, gpuTemp, cpuLoad, gpuLoad, source, DateTime.UtcNow,
+                    cpuWatts, gpuWatts);
             }
             catch
             {
@@ -263,6 +275,78 @@ public sealed class SensorService : IDisposable
                 sb.AppendLine($"  {z.Name,-14} {z.Celsius:0.0} °C");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// AMD and Intel both surface package power under one of these. Reading it needs
+    /// the same ring-0 driver as package temperature, so on a machine where the
+    /// driver is blocked there is no CPU wattage at all — there is no WMI or ACPI
+    /// equivalent to fall back to.
+    /// </summary>
+    private static readonly string[] CpuPowerNames =
+        { "Package Power", "Package", "CPU Package", "CPU Package Power", "CPU PPT", "Total Power" };
+
+    /// <summary>
+    /// NVIDIA reports board power through NVAPI, which is a user-mode library shipped
+    /// with the display driver, so this one works without any kernel driver.
+    /// </summary>
+    private static readonly string[] GpuPowerNames =
+        { "GPU Power", "GPU Package", "GPU Board Power Draw", "GPU PPT", "GPU Rail" };
+
+    private bool _sawCpuWatts;
+    private bool _sawGpuWatts;
+
+    /// <summary>Whether a plausible package-power reading has ever arrived.</summary>
+    public bool CpuWattsAvailable => _sawCpuWatts;
+    public bool GpuWattsAvailable => _sawGpuWatts;
+
+    public string PowerExplanation
+    {
+        get
+        {
+            var driver = Platform.PawnIoStatus.Describe();
+
+            return (_sawCpuWatts, _sawGpuWatts) switch
+            {
+                (true, true) => $"CPU and GPU package power are both being read. {driver}",
+                (true, false) =>
+                    "CPU power is being read, but the GPU is not reporting board power. On a laptop "
+                    + "that usually means the discrete GPU has powered down; it appears under load.",
+                (false, true) =>
+                    "GPU board power is being read through NVAPI, which needs no kernel driver. "
+                    + "CPU package power is not available: it lives behind a model-specific register, "
+                    + "and unlike temperature there is no ACPI or WMI fallback for wattage. "
+                    + driver,
+                _ => "Neither CPU nor GPU package power is readable. " + driver,
+            };
+        }
+    }
+
+    /// <summary>True when the missing CPU reading is explained by the absent driver.</summary>
+    public bool CpuWattsBlockedByDriver => !_sawCpuWatts && !Platform.PawnIoStatus.Available;
+
+    private static double? PickPower(IHardware hw, string[] preferred)
+    {
+        var sensors = hw.Sensors
+            .Where(s => s.SensorType == SensorType.Power && SensorSnapshot.PlausibleWatts(s.Value))
+            .ToList();
+
+        foreach (var sub in hw.SubHardware)
+            sensors.AddRange(sub.Sensors
+                .Where(s => s.SensorType == SensorType.Power && SensorSnapshot.PlausibleWatts(s.Value)));
+
+        if (sensors.Count == 0) return null;
+
+        foreach (var name in preferred)
+        {
+            var hit = sensors.FirstOrDefault(s =>
+                string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (hit?.Value is { } v) return v;
+        }
+
+        // Nothing matched by name. The package rail is the largest of the reported
+        // rails, so that is the best guess left.
+        return sensors.Max(s => s.Value);
     }
 
     private static double? PickTemperature(IHardware hw, string? pinnedId, string[] preferred)

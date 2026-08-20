@@ -26,6 +26,12 @@ public static class DiagnosticReport
         sb.AppendLine($"Machine    : {Environment.MachineName}");
         sb.AppendLine();
 
+        sb.AppendLine("=== Kernel driver (PawnIO) ===");
+        sb.AppendLine(Platform.PawnIoStatus.Describe());
+        sb.AppendLine($"  registry version : {Platform.PawnIoStatus.InstalledVersion() ?? "(not installed)"}");
+        sb.AppendLine($"  device reachable : {Platform.PawnIoStatus.DevicePresent()}");
+        sb.AppendLine();
+
         sb.AppendLine("=== All HID interfaces ===");
         sb.AppendLine("Every HID device visible to this process, with the access mask Windows granted.");
         sb.AppendLine("A Razer laptop's control interface is normally VID 1532 with feature length 91.");

@@ -22,6 +22,14 @@ public sealed class FanChannel
     public int MeasuredRpm { get; set; }
     public int LastSentRpm { get; private set; } = -1;
 
+    /// <summary>
+    /// Whether a speed has been computed yet. This is tracked separately rather than
+    /// inferred from CommandedRpm being zero: once the fans are allowed to stop, zero
+    /// is a perfectly ordinary running value, and treating it as "not started yet"
+    /// would let the fan jump straight to full speed with no ramp.
+    /// </summary>
+    private bool _initialised;
+
     public FanChannel(FanZone zone, string name)
     {
         Zone = zone;
@@ -35,6 +43,7 @@ public sealed class FanChannel
         CurveDemandRpm = rpm;
         LastSentRpm = -1;
         MeasuredRpm = 0;
+        _initialised = false;
     }
 
     public void MarkSent(int rpm) => LastSentRpm = rpm;
@@ -62,9 +71,10 @@ public sealed class FanChannel
 
         target = Math.Clamp(target, safety.MinRpm, safety.MaxRpm);
 
-        if (CommandedRpm <= 0)
+        if (!_initialised)
         {
             CommandedRpm = target;
+            _initialised = true;
         }
         else if (target > CommandedRpm)
         {

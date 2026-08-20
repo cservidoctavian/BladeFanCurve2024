@@ -55,20 +55,30 @@ public static class ConfigStore
         }
     }
 
+    /// <summary>
+    /// The control loop saves too — it switches profiles when the charger is pulled —
+    /// so writes have to be serialised against the UI thread or the two can collide
+    /// on the temp file.
+    /// </summary>
+    private static readonly object SaveGate = new();
+
     public static void Save(AppConfig config)
     {
-        try
+        lock (SaveGate)
         {
-            System.IO.Directory.CreateDirectory(Directory);
-            Sanitise(config);
+            try
+            {
+                System.IO.Directory.CreateDirectory(Directory);
+                Sanitise(config);
 
-            var tmp = ConfigPath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(config, Options));
-            File.Move(tmp, ConfigPath, overwrite: true);
-        }
-        catch
-        {
-            // A failed save must never take the control loop down.
+                var tmp = ConfigPath + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(config, Options));
+                File.Move(tmp, ConfigPath, overwrite: true);
+            }
+            catch
+            {
+                // A failed save must never take the control loop down.
+            }
         }
     }
 
@@ -77,6 +87,11 @@ public static class ConfigStore
     {
         c.Safety.MinRpm = Math.Clamp(c.Safety.MinRpm, 0, 10000);
         c.Safety.MaxRpm = Math.Clamp(c.Safety.MaxRpm, c.Safety.MinRpm, 10000);
+        // The guard is worthless above the critical point and nonsensical below room
+        // temperature, and a 0% guard is just the guard turned off.
+        c.Safety.SpinUpTempC = Math.Clamp(c.Safety.SpinUpTempC, 40, c.Safety.CpuCriticalC);
+        c.Safety.SpinUpPercent = Math.Clamp(c.Safety.SpinUpPercent, 10, 100);
+        c.Safety.SpinUpReleaseMarginC = Math.Clamp(c.Safety.SpinUpReleaseMarginC, 1, 20);
         c.Safety.CpuCriticalC = Math.Clamp(c.Safety.CpuCriticalC, 60, 105);
         c.Safety.GpuCriticalC = Math.Clamp(c.Safety.GpuCriticalC, 60, 105);
         c.Safety.CriticalReleaseMarginC = Math.Clamp(c.Safety.CriticalReleaseMarginC, 1, 25);
@@ -113,9 +128,15 @@ public static class ConfigStore
         c.Display.NightLightStartMinutes = Math.Clamp(c.Display.NightLightStartMinutes, 0, 1439);
         c.Display.NightLightEndMinutes = Math.Clamp(c.Display.NightLightEndMinutes, 0, 1439);
 
+        c.Automation ??= new AutomationSettings();
+        if (string.IsNullOrWhiteSpace(c.Automation.BatteryProfile))
+            c.Automation.BatteryProfile = "Silent";
+
         c.Battery ??= new BatterySettings();
         c.Battery.ChargeLimitPercent = Math.Clamp(c.Battery.ChargeLimitPercent,
             Hardware.RazerPower.MinChargeLimit, Hardware.RazerPower.MaxChargeLimit);
+
+        MigrateProfilePower(c);
 
         foreach (var profile in c.Profiles)
         {
@@ -155,6 +176,49 @@ public static class ConfigStore
     /// Accepts "#RRGGBB", "RRGGBB" or anything else and always returns a well-formed
     /// "#RRGGBB", so a hand-edited config cannot produce an unparseable colour.
     /// </summary>
+    /// <summary>
+    /// One-time upgrade for configs written before profiles carried power settings.
+    /// A profile that still has an entirely empty power block and a name matching one
+    /// of the shipped profiles adopts that profile's settings; anything the user has
+    /// already customised is left strictly alone. Keyed on the version number so it
+    /// cannot run twice and undo a later edit.
+    /// </summary>
+    internal static void MigrateProfilePower(AppConfig c)
+    {
+        if (c.Version >= 3) return;
+
+        // "Turbo" shipped only briefly under that name before reverting to
+        // "Performance". Rename it so the shipped defaults line up again.
+        foreach (var profile in c.Profiles.Where(p => p.Name == "Turbo"))
+        {
+            profile.Name = "Performance";
+            if (c.ActiveProfile == "Turbo") c.ActiveProfile = "Performance";
+        }
+
+        var shipped = AppConfig.CreateDefault().Profiles.ToDictionary(p => p.Name, p => p.Power);
+
+        foreach (var profile in c.Profiles)
+        {
+            profile.Power ??= new ProfilePower();
+            if (!IsUntouched(profile.Power)) continue;
+            if (!shipped.TryGetValue(profile.Name, out var defaults)) continue;
+
+            profile.Power = defaults.Clone();
+        }
+
+        c.Version = 3;
+    }
+
+    /// <summary>True when every field is still at "leave it alone".</summary>
+    private static bool IsUntouched(ProfilePower p) =>
+        string.IsNullOrEmpty(p.PerfMode)
+        && string.IsNullOrEmpty(p.FallbackPerfMode)
+        && string.IsNullOrEmpty(p.CpuBoost)
+        && string.IsNullOrEmpty(p.GpuBoost)
+        && string.IsNullOrEmpty(p.WindowsPlan)
+        && string.IsNullOrEmpty(p.PowerOverlay)
+        && p.RefreshHz == 0;
+
     private static string NormaliseHex(string? value, string fallback)
     {
         if (string.IsNullOrWhiteSpace(value)) return fallback;

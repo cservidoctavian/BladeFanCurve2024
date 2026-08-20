@@ -41,6 +41,16 @@ public static class FanCurveEvaluator
     }
 
     /// <summary>Rounds to the nearest 100 RPM, because the protocol transmits rpm/100.</summary>
+    /// <summary>
+    /// The RPM the thermal guard demands: a percentage of the maximum, quantised so it
+    /// lands on a value the wire can actually carry.
+    /// </summary>
+    public static int SpinUpRpm(SafetySettings safety)
+    {
+        var raw = (int)Math.Round(safety.MaxRpm * (safety.SpinUpPercent / 100.0));
+        return Quantise(raw, 0, safety.MaxRpm);
+    }
+
     public static int Quantise(int rpm, int minRpm, int maxRpm)
     {
         var clamped = Math.Clamp(rpm, minRpm, maxRpm);

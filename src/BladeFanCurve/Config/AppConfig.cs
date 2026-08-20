@@ -74,10 +74,22 @@ public sealed class ProfilePower
     /// <summary>Razer performance mode: Balanced, Gaming, Creator, Custom. Empty leaves it.</summary>
     public string PerfMode { get; set; } = "";
 
-    /// <summary>Low, Medium, High, Boost. Only applied in Custom mode, and only if the firmware exposes it.</summary>
+    /// <summary>
+    /// Used when <see cref="PerfMode"/> is Custom but the firmware does not expose the
+    /// boost commands. Custom mode without boost control would leave the machine on
+    /// whatever the firmware happens to default Custom to, which is not what the
+    /// profile asked for — so it drops to this named mode instead.
+    /// </summary>
+    public string FallbackPerfMode { get; set; } = "";
+
+    /// <summary>
+    /// Low, Medium, High, Boost. The controller only honours these in Custom mode, so
+    /// setting a boost level while <see cref="PerfMode"/> is Balanced or Gaming does
+    /// nothing at all.
+    /// </summary>
     public string CpuBoost { get; set; } = "";
 
-    /// <summary>Low, Medium, High.</summary>
+    /// <summary>Low, Medium, High. Same Custom-mode requirement as the CPU.</summary>
     public string GpuBoost { get; set; } = "";
 
     /// <summary>Windows power scheme GUID, or empty to leave the current one.</summary>
@@ -134,10 +146,49 @@ public sealed class BatterySettings
     public bool ReapplyChargeLimit { get; set; } = true;
 }
 
+public sealed class AutomationSettings
+{
+    /// <summary>Switch profile when the charger is unplugged.</summary>
+    public bool SwitchProfileOnBattery { get; set; } = true;
+
+    /// <summary>The profile to select on battery. Ignored if no profile has this name.</summary>
+    public string BatteryProfile { get; set; } = "Silent";
+
+    /// <summary>Go back to the previous profile when the charger goes back in.</summary>
+    public bool RestoreProfileOnAc { get; set; } = true;
+
+    /// <summary>
+    /// Which profile was active before the charger came out. Persisted rather than
+    /// held in memory so that unplugging, closing the lid overnight and plugging back
+    /// in tomorrow still restores the right one.
+    /// </summary>
+    public string ProfileBeforeBattery { get; set; } = "";
+}
+
 public sealed class SafetySettings
 {
-    /// <summary>Never command a fan below this. Protects against a badly drawn curve.</summary>
+    /// <summary>
+    /// Never command a fan below this. Set it to 0 to let the fans stop completely —
+    /// the thermal guard below is what keeps that safe.
+    /// </summary>
     public int MinRpm { get; set; } = 2000;
+
+    /// <summary>
+    /// Thermal guard. Independent of the curves and of any manual override: once
+    /// either package reaches <see cref="SpinUpTempC"/>, both fans are forced to at
+    /// least <see cref="SpinUpPercent"/> of <see cref="MaxRpm"/>. This is what makes a
+    /// 0 RPM floor safe to use — the fans can idle silently, but they cannot stay
+    /// stopped while the machine is heating up.
+    /// </summary>
+    public bool SpinUpEnabled { get; set; } = true;
+
+    public double SpinUpTempC { get; set; } = 70;
+
+    /// <summary>Percentage of MaxRpm to force once the guard engages.</summary>
+    public int SpinUpPercent { get; set; } = 50;
+
+    /// <summary>How far the temperature must fall before the guard lets go again.</summary>
+    public double SpinUpReleaseMarginC { get; set; } = 5;
 
     /// <summary>Upper bound sent to the EC. The EC clamps to its own maximum anyway.</summary>
     public int MaxRpm { get; set; } = 5000;
@@ -255,6 +306,7 @@ public sealed class AppConfig
     public TuningSettings Tuning { get; set; } = new();
     public DeviceSettings Device { get; set; } = new();
     public LightingSettings Lighting { get; set; } = new();
+    public AutomationSettings Automation { get; set; } = new();
     public DisplaySettings Display { get; set; } = new();
     public BatterySettings Battery { get; set; } = new();
 
@@ -277,7 +329,10 @@ public sealed class AppConfig
                 // which on a 240 Hz panel is a larger battery saving than anything else here.
                 Power = new ProfilePower
                 {
-                    PerfMode = "Balanced",
+                    // Custom is the only mode in which the controller honours boost
+                    // levels, so it is what "lowest power" actually requires.
+                    PerfMode = "Custom",
+                    FallbackPerfMode = "Balanced",
                     CpuBoost = "Low",
                     GpuBoost = "Low",
                     WindowsPlan = "a1841308-3541-4fab-bc81-f71556f20b4a",
@@ -309,7 +364,8 @@ public sealed class AppConfig
                 GpuFan = FanCurveConfig.DefaultGpu(),
                 Power = new ProfilePower
                 {
-                    PerfMode = "Balanced",
+                    PerfMode = "Custom",
+                    FallbackPerfMode = "Balanced",
                     CpuBoost = "Medium",
                     GpuBoost = "Medium",
                     WindowsPlan = "381b4222-f694-41f0-9685-ff5bb260df2e",
@@ -323,14 +379,15 @@ public sealed class AppConfig
                 // forced to maximum, because that is the user's call, not the profile's.
                 Power = new ProfilePower
                 {
-                    PerfMode = "Gaming",
+                    PerfMode = "Custom",
+                    FallbackPerfMode = "Gaming",
                     CpuBoost = "Boost",
                     GpuBoost = "High",
                     WindowsPlan = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
                     PowerOverlay = "performance",
                     RefreshHz = 0,
                 },
-                Name = "Turbo",
+                Name = "Performance",
                 CpuFan = new FanCurveConfig
                 {
                     Points =

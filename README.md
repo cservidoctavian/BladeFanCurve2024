@@ -206,19 +206,146 @@ rendered frame. Change that with `Lighting.RestoreOnExit` in the config
 
 ---
 
+## Turning the fans off
+
+Settings → **Let the fans stop completely (0 RPM)** drops the floor to zero, so the
+curves and the manual slider can both go all the way down. The default floor is 2000
+because that is where Razer's own manual range starts.
+
+What makes that safe is the **thermal guard**, right below it: once *either* package
+reaches **70 °C**, both fans are forced to at least **50%** of maximum, regardless of
+what the curve or the manual override is asking for. Both numbers are editable.
+
+Three tiers, in order of authority:
+
+| | Trigger | Result |
+|---|---|---|
+| Curve or manual | — | whatever you asked for, down to 0 |
+| Thermal guard | either package ≥ 70 °C | at least 50% of max |
+| Critical | CPU ≥ 97 °C or GPU ≥ 88 °C | 100% |
+
+The guard is a **floor, not a target**: a curve already asking for more than 50% is
+not dragged down to it. It releases only after the machine has cooled by the release
+margin (5 °C by default), so it cannot chatter on and off at the threshold.
+
+Turning on the 0 RPM floor switches the guard on if it was off. Letting the fans stop
+with no guard at all is the one combination the app will not set up silently.
+
+**What the hardware does with 0 is its own business.** The value is sent as rpm/100
+in a single byte, so 0 goes out as `0x00`, but whether the controller honours it or
+clamps to its own minimum is firmware behaviour this app cannot override. The
+measured RPM on the status tiles is the honest answer.
+
+**One risk worth naming.** If the app is stopped at 0 RPM and *hangs* — not crashes,
+which the failsafe catches — nothing here is running to spin the fans back up. The
+sensor watchdog hands control back to the laptop after six seconds without a reading,
+and the controller has its own thermal protection underneath all of this, but a 0 RPM
+floor is a genuinely lower-margin setting than 2000. That is the trade for silence.
+
+---
+
+## On battery
+
+Pull the charger out and the app switches to the **Silent** profile — which drops the
+CPU and GPU power levels, moves Windows to the power-saver plan, and takes the panel
+to 60 Hz. Plug back in and it returns to whatever was active before.
+
+Both halves can be turned off separately, and the battery profile is a dropdown, so
+"Silent" is a default rather than a rule.
+
+Three details that make it behave rather than fight you:
+
+**A profile you pick by hand wins.** If you unplug, get Silent, then deliberately
+select Performance anyway, plugging the charger back in leaves you on Performance.
+The app only ever undoes its own switch, never yours.
+
+**Starting plugged in changes nothing.** The first power reading after launch
+establishes a baseline; it does not "restore" a profile you never left. Starting *on*
+battery does switch, because the machine really is on battery.
+
+**Two agreeing reads are required.** Power status can report a transitional value for
+a moment while the supply settles, and switching profiles writes config, changes the
+Windows power plan and can change the refresh rate — far too much to do on a glitch.
+
+The profile to return to is written to the config rather than held in memory, so
+unplugging, closing the lid overnight and plugging in tomorrow still restores the
+right one.
+
+---
+
+## Monitor — package power
+
+A rolling 30-minute graph of CPU and GPU package power, sampled once a second.
+
+Both series are watts, so they share **one y-axis**. Two scales on one plot would
+make the lines look comparable when they are not — it is the most common way a chart
+lies, and it is not worth the pixels it saves.
+
+The history is owned by the control loop, not the window, so it keeps filling while
+the app sits in the tray. Closing the window does not reset the graph.
+
+**Gaps stay gaps.** A tick where nothing could be measured is stored as absent and
+drawn as a break in the line. Joining across it would invent power draw that was
+never measured, and a discrete GPU that has powered itself down would appear to be
+sitting at 0 W rather than simply not reporting.
+
+The series colours were checked rather than chosen by eye: CPU `#3AAD77` and GPU
+`#6070DE` separate by ΔE 23.5 under deuteranopia and 26.5 for normal vision, both
+well clear of the floors, and each clears 3:1 contrast against the card.
+
+### Whether it will work on your machine
+
+CPU package power and CPU package temperature both live behind model-specific
+registers, which no user-mode API exposes. Reading them needs a kernel driver.
+
+LibreHardwareMonitor 0.9.x uses **PawnIO** for this — a signed driver that runs
+sandboxed bytecode modules rather than granting blanket ring-0 access. If it is not
+installed, the CPU line cannot be drawn at all and the Source panel says so instead
+of showing a flat line at zero. There is no ACPI or WMI fallback for wattage the way
+there is for temperature.
+
+**A correction worth reading.** Earlier versions of the library used WinRing0, which
+Microsoft's vulnerable-driver blocklist and Memory Integrity genuinely do block — so
+"turn off Core Isolation" is the advice all over the internet, and it is what this
+project assumed at first. Version 0.9.6 does not ship or use WinRing0 at all.
+Disabling Memory Integrity fixes nothing here and only makes the machine less safe.
+The fix is to install PawnIO from [pawnio.eu](https://pawnio.eu/).
+
+The app detects the driver, reports its version, and offers a link — it will not
+install a kernel driver for you. That should be a deliberate decision made after
+looking at the project yourself.
+
+GPU board power comes from NVAPI, a user-mode library shipped with the display
+driver, so it needs no kernel driver at all. On a laptop the discrete GPU often
+reports nothing at idle because it has powered down; it appears under load.
+
+---
+
 ## Power profiles
 
 A profile is not just a pair of fan curves. Each one can also set the Razer
 performance mode, CPU/GPU boost, the Windows power plan and power-mode slider, and
 the display refresh rate — and switching profiles applies all of it at once.
 
-| | Silent | Balanced | Turbo |
+| | Silent | Balanced | Performance |
 |---|---|---|---|
-| Performance mode | Balanced (35 W) | Balanced (35 W) | Gaming (55 W) |
-| CPU / GPU boost | Low | Medium | Boost / High |
+| CPU power | Low | Medium | Boost |
+| GPU power | Low | Medium | High |
+| Performance mode | Custom | Custom | Custom |
+| If Custom unavailable | Balanced (35 W) | Balanced (35 W) | Gaming (55 W) |
 | Windows plan | Power saver | Balanced | High performance |
 | Power mode | Best efficiency | Recommended | Best performance |
 | Refresh rate | 60 Hz | leave | leave |
+
+Selecting a profile on the **Fan curves** tab applies all of this at once — the
+curves and the power settings are one switch, not two.
+
+**Why every profile selects Custom.** The controller only honours CPU and GPU power
+levels while it is in Custom mode. Setting a power level alongside Balanced or Gaming
+does nothing at all — an earlier version made exactly that mistake, leaving Silent
+and Balanced identical in power. If the firmware turns out not to expose the power
+level commands, the profile drops to its named fallback mode instead, which still
+moves the power target even though it cannot separate CPU from GPU.
 
 Every field can be set to **Leave unchanged**, and that is the default for any
 profile you create or that was written by an older version — upgrading never starts
@@ -472,7 +599,7 @@ dotnet publish src\BladeFanCurve -c Release -o publish
 dotnet run --project tests\ProtocolTests -c Release
 ```
 
-The test suite is 232 checks over the report encoding, the CRC, curve
+The test suite is 321 checks over the report encoding, the CRC, curve
 interpolation, the safety clamps, the model table, the HID access strategy and the
 sensor fallback logic, plus guards on the build settings WPF cannot run under and on every XAML style
 being applied to a compatible element type.
@@ -497,7 +624,7 @@ src/BladeFanCurve/
   Config/       AppConfig.cs, ConfigStore.cs           JSON settings with clamping
   UI/           CurveEditor.cs, TrayManager.cs         curve editor, tray icon
   MainWindow.xaml(.cs), App.xaml(.cs)
-tests/ProtocolTests/                                   232 checks, no hardware needed
+tests/ProtocolTests/                                   321 checks, no hardware needed
 install/                                               logon task scripts
 ```
 

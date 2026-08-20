@@ -77,16 +77,94 @@ public partial class MainWindow : Window
 
         BuildEffectList();
         LoadLightingSettings();
+        _loop.ProfileAutoSwitched += OnProfileAutoSwitched;
         _loop.LightingAttached += OnLightingAttached;
         if (_loop.Lighting != null) OnLightingAttached(_loop.Lighting);
 
         LoadPowerTab();
+        StartMonitor();
 
         _previewTimer.Tick += (_, _) => TickPreview();
         _previewTimer.Start();
 
         _loading = false;
         OnStatusUpdated(_loop.Status);
+    }
+
+    // ----------------------------------------------------------------- monitor
+
+    private readonly System.Windows.Threading.DispatcherTimer _chartTimer = new()
+    {
+        Interval = TimeSpan.FromSeconds(1)
+    };
+
+    private void StartMonitor()
+    {
+        PowerChartView.EmptyMessage =
+            "Waiting for the first readings. The window fills over 30 minutes.";
+
+        _chartTimer.Tick += (_, _) => RefreshChart();
+        _chartTimer.Start();
+        RefreshChart();
+    }
+
+    private void RefreshChart()
+    {
+        // Only redraw when this tab is actually on screen; the history keeps
+        // accumulating in the control loop either way.
+        if (Tabs.SelectedItem is not TabItem { Header: "Monitor" }) return;
+
+        var history = _loop.PowerHistory;
+        var samples = history.Snapshot(_loop.ElapsedSeconds);
+        PowerChartView.Update(samples, history.PeakWatts);
+
+        var status = _loop.Status;
+        CpuWattNow.Text = status.CpuWatts is { } c ? $"{c:0.0} W" : "—";
+        GpuWattNow.Text = status.GpuWatts is { } g ? $"{g:0.0} W" : "—";
+
+        Avg1MinText.Text = FormatAverage(samples, 60);
+        Avg30MinText.Text = FormatAverage(samples, PowerHistory.WindowSeconds);
+
+        if (samples.Count < 2)
+            PowerChartView.EmptyMessage = _sensors.CpuWattsAvailable || _sensors.GpuWattsAvailable
+                ? "Waiting for the first readings. The window fills over 30 minutes."
+                : "No package power readings are available on this machine — see Source below.";
+
+        PowerSourceText.Text = _sensors.PowerExplanation;
+
+        // Only offer the driver when its absence is actually the problem.
+        GetPawnIoButton.Visibility = _sensors.CpuWattsBlockedByDriver
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void GetPawnIo_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(this,
+            "CPU package power and package temperature are read through model-specific registers, "
+            + "which need a kernel driver. LibreHardwareMonitor uses PawnIO for this — a signed "
+            + "driver that runs sandboxed bytecode modules rather than granting blanket ring-0 "
+            + "access.\n\n"
+            + "This app will not install it for you: it is a kernel driver, and that should be your "
+            + "decision, made after looking at the project yourself.\n\n"
+            + "Open pawnio.eu in your browser?",
+            "Blade Fan Curve", MessageBoxButton.YesNo, MessageBoxImage.Information);
+
+        if (answer != MessageBoxResult.Yes) return;
+
+        OpenPath(PawnIoStatus.DownloadUrl);
+    }
+
+    private static string FormatAverage(IReadOnlyList<PowerSample> samples, double seconds)
+    {
+        var cpu = PowerHistory.Average(samples, s => s.CpuWatts, seconds);
+        var gpu = PowerHistory.Average(samples, s => s.GpuWatts, seconds);
+
+        var cpuText = cpu is { } c ? $"{c:0.0} W" : "—";
+        var gpuText = gpu is { } g ? $"{g:0.0} W" : "—";
+        var total = cpu is { } a && gpu is { } b ? $"    total {a + b:0.0} W" : "";
+
+        return $"CPU {cpuText}    GPU {gpuText}{total}";
     }
 
     // ------------------------------------------------------------------- power
@@ -167,6 +245,7 @@ public partial class MainWindow : Window
         Charge100.IsChecked = _config.Battery.ChargeLimitPercent > 80;
 
         LoadProfilePower();
+        LoadAutomation();
         RefreshPowerSupportText();
 
         _nightLight.StateChanged += on => Dispatcher.BeginInvoke(() =>
@@ -202,6 +281,14 @@ public partial class MainWindow : Window
             ("Custom", "Custom"),
         }, power.PerfMode);
 
+        FillCombo(FallbackModeBox, new[]
+        {
+            ("", "Leave unchanged"),
+            ("Balanced", "Balanced  ·  35 W CPU"),
+            ("Gaming", "Gaming  ·  55 W CPU"),
+            ("Creator", "Creator"),
+        }, power.FallbackPerfMode);
+
         FillCombo(CpuBoostBox, new[]
         {
             ("", "Leave unchanged"), ("Low", "Low"), ("Medium", "Medium"),
@@ -235,9 +322,11 @@ public partial class MainWindow : Window
         BoostSupportText.Text = power switch
         {
             null => "Waiting for the controller.",
-            { SupportsBoost: true } => "Boost levels are supported. They only take effect in Custom mode.",
-            _ => "This firmware does not expose CPU/GPU boost, so those two are ignored. "
-               + "Performance mode still changes the power target.",
+            { SupportsBoost: true } => "CPU and GPU power levels are supported. The controller only "
+                                     + "honours them in Custom mode, so a profile that sets them must "
+                                     + "also select Custom above.",
+            _ => "This firmware does not expose CPU/GPU power levels. A profile asking for Custom "
+               + "will use its fallback mode instead, which still changes the power target.",
         };
 
         var supportsLimit = power is { SupportsChargeLimit: true };
@@ -267,12 +356,113 @@ public partial class MainWindow : Window
 
     private void UpdateKelvinText() => KelvinText.Text = $"{(int)KelvinSlider.Value} K";
 
+    private void LoadAutomation()
+    {
+        SwitchOnBatteryToggle.IsChecked = _config.Automation.SwitchProfileOnBattery;
+        RestoreOnAcToggle.IsChecked = _config.Automation.RestoreProfileOnAc;
+
+        FillCombo(BatteryProfileBox,
+            _config.Profiles.Select(p => (p.Name, p.Name)).ToList(),
+            _config.Automation.BatteryProfile);
+
+        UpdateAutomationStatus();
+    }
+
+    private void UpdateAutomationStatus()
+    {
+        var onBattery = false;
+        try
+        {
+            onBattery = System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus ==
+                        System.Windows.Forms.PowerLineStatus.Offline;
+        }
+        catch { /* treated as plugged in */ }
+
+        AutomationStatusText.Text = onBattery
+            ? "Running on battery now."
+            : "Plugged in now.";
+    }
+
+    private void Automation_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || _loading) return;
+
+        _config.Automation.SwitchProfileOnBattery = SwitchOnBatteryToggle.IsChecked == true;
+        _config.Automation.RestoreProfileOnAc = RestoreOnAcToggle.IsChecked == true;
+
+        var chosen = SelectedTag(BatteryProfileBox);
+        if (!string.IsNullOrEmpty(chosen)) _config.Automation.BatteryProfile = chosen;
+
+        UpdateAutomationStatus();
+        Persist();
+    }
+
+    private void Automation_Changed(object sender, SelectionChangedEventArgs e) =>
+        Automation_Changed(sender, (RoutedEventArgs)e);
+
+    /// <summary>The control loop changed the profile by itself; catch the UI up.</summary>
+    private void OnProfileAutoSwitched(string name, string reason)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            _loading = true;
+            foreach (var child in ProfileSegments.Children)
+                if (child is RadioButton rb)
+                    rb.IsChecked = (string)rb.Content == name;
+            _loading = false;
+
+            BindCurves();
+            CpuCurveEditor.InvalidateVisual();
+            GpuCurveEditor.InvalidateVisual();
+            TryLoadProfilePower();
+            UpdateAutomationStatus();
+
+            AutomationStatusText.Text = $"Switched to {name} — {reason}.";
+        });
+    }
+
+
+    /// <summary>
+    /// The convenience switch for a 0 RPM floor. Turning it off restores 2000 rather
+    /// than whatever odd value was there before, because a floor between 1 and 1999 is
+    /// below anything the controller will actually run and behaves like 0 anyway.
+    /// </summary>
+    private void AllowStop_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || _loading) return;
+
+        var allow = AllowStopToggle.IsChecked == true;
+        _config.Safety.MinRpm = allow ? 0 : 2000;
+        MinRpmBox.Text = _config.Safety.MinRpm.ToString(CultureInfo.InvariantCulture);
+
+        if (allow && SpinUpToggle.IsChecked != true)
+        {
+            // Letting the fans stop with no guard at all is the one combination worth
+            // refusing to set up silently.
+            SpinUpToggle.IsChecked = true;
+            _config.Safety.SpinUpEnabled = true;
+        }
+
+        ApplyRanges();
+        PersistNow();
+    }
+
+    private void ApplyRanges()
+    {
+        CpuCurveEditor.MinRpm = _config.Safety.MinRpm;
+        GpuCurveEditor.MinRpm = _config.Safety.MinRpm;
+        OverrideSlider.Minimum = _config.Safety.MinRpm;
+        CpuCurveEditor.InvalidateVisual();
+        GpuCurveEditor.InvalidateVisual();
+    }
+
     private void ProfilePower_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || _loading) return;
 
         var power = _config.GetActiveProfile().Power ??= new ProfilePower();
         power.PerfMode = SelectedTag(PerfModeBox);
+        power.FallbackPerfMode = SelectedTag(FallbackModeBox);
         power.CpuBoost = SelectedTag(CpuBoostBox);
         power.GpuBoost = SelectedTag(GpuBoostBox);
         power.WindowsPlan = SelectedTag(PowerPlanBox);
@@ -938,6 +1128,11 @@ public partial class MainWindow : Window
         GpuCritBox.Text = _config.Safety.GpuCriticalC.ToString("0.#", CultureInfo.InvariantCulture);
         StaleBox.Text = _config.Safety.SensorStaleSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         BatteryToggle.IsChecked = _config.Safety.RevertToAutoOnBattery;
+        AllowStopToggle.IsChecked = _config.Safety.MinRpm <= 0;
+        SpinUpToggle.IsChecked = _config.Safety.SpinUpEnabled;
+        SpinUpTempBox.Text = _config.Safety.SpinUpTempC.ToString("0.#", CultureInfo.InvariantCulture);
+        SpinUpPercentBox.Text = _config.Safety.SpinUpPercent.ToString(CultureInfo.InvariantCulture);
+        SpinUpMarginBox.Text = _config.Safety.SpinUpReleaseMarginC.ToString("0.#", CultureInfo.InvariantCulture);
 
         PollBox.Text = _config.Tuning.PollIntervalMs.ToString(CultureInfo.InvariantCulture);
         FallRateBox.Text = _config.Tuning.TempFallRateCPerSec.ToString("0.##", CultureInfo.InvariantCulture);
@@ -961,6 +1156,10 @@ public partial class MainWindow : Window
         _config.Safety.GpuCriticalC = ParseDouble(GpuCritBox.Text, _config.Safety.GpuCriticalC);
         _config.Safety.SensorStaleSeconds = ParseDouble(StaleBox.Text, _config.Safety.SensorStaleSeconds);
         _config.Safety.RevertToAutoOnBattery = BatteryToggle.IsChecked == true;
+        _config.Safety.SpinUpEnabled = SpinUpToggle.IsChecked == true;
+        _config.Safety.SpinUpTempC = ParseDouble(SpinUpTempBox.Text, _config.Safety.SpinUpTempC);
+        _config.Safety.SpinUpPercent = ParseInt(SpinUpPercentBox.Text, _config.Safety.SpinUpPercent);
+        _config.Safety.SpinUpReleaseMarginC = ParseDouble(SpinUpMarginBox.Text, _config.Safety.SpinUpReleaseMarginC);
 
         _config.Tuning.PollIntervalMs = ParseInt(PollBox.Text, _config.Tuning.PollIntervalMs);
         _config.Tuning.TempFallRateCPerSec = ParseDouble(FallRateBox.Text, _config.Tuning.TempFallRateCPerSec);
@@ -970,6 +1169,11 @@ public partial class MainWindow : Window
 
         _config.Device.CommandDelayMs = ParseInt(CmdDelayBox.Text, _config.Device.CommandDelayMs);
         _config.StartMinimized = StartMinimisedToggle.IsChecked == true;
+
+        // The minimum can be typed directly as well as toggled, so keep the checkbox
+        // and the editors in step with whatever ended up in the box.
+        AllowStopToggle.IsChecked = _config.Safety.MinRpm <= 0;
+        ApplyRanges();
 
         _config.CpuSensorId = (CpuSensorCombo.SelectedItem as SensorDescriptor)?.Id;
         _config.GpuSensorId = (GpuSensorCombo.SelectedItem as SensorDescriptor)?.Id;

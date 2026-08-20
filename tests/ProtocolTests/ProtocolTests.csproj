@@ -24,6 +24,9 @@
     <Compile Include="..\..\src\BladeFanCurve\Platform\NightLightService.cs" Link="Platform\NightLightService.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Platform\DisplayControl.cs" Link="Platform\DisplayControl.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Control\Log.cs" Link="Control\Log.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\PowerHistory.cs" Link="Control\PowerHistory.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\AutoProfileDecision.cs" Link="Control\AutoProfileDecision.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\ControlStatus.cs" Link="Control\ControlStatus.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Config\ConfigStore.cs" Link="Config\ConfigStore.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Config\AppConfig.cs" Link="Config\AppConfig.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Control\FanCurveEvaluator.cs" Link="Control\FanCurveEvaluator.cs" />

@@ -185,7 +185,7 @@
         </Border>
 
         <!-- ======================= tabs ======================= -->
-        <TabControl Grid.Row="3" Margin="26,20,26,22">
+        <TabControl x:Name="Tabs" Grid.Row="3" Margin="26,20,26,22">
 
             <!-- ================= fan curves ================= -->
             <TabItem Header="Fan curves">
@@ -376,6 +376,40 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="Sensor timeout (s)" VerticalAlignment="Center"/>
                                     <TextBox x:Name="StaleBox" Grid.Column="1"/>
+                                </Grid>
+
+                                <CheckBox x:Name="AllowStopToggle" Style="{StaticResource PlainCheck}"
+                                          Content="Let the fans stop completely (0 RPM)"
+                                          Margin="0,14,0,0"
+                                          Checked="AllowStop_Changed" Unchecked="AllowStop_Changed"/>
+
+                                <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                           Text="Sets the minimum to 0. The guard below is what makes that safe — leave it on."/>
+
+                                <CheckBox x:Name="SpinUpToggle" Style="{StaticResource PlainCheck}"
+                                          Content="Thermal guard" Margin="0,16,0,0"/>
+
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="190"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Text="Spin up at (°C)" VerticalAlignment="Center"
+                                               Margin="0,0,0,8"/>
+                                    <TextBox x:Name="SpinUpTempBox" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <TextBlock Grid.Row="1" Text="Spin up to (% of max)" VerticalAlignment="Center"
+                                               Margin="0,0,0,8"/>
+                                    <TextBox x:Name="SpinUpPercentBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <TextBlock Grid.Row="2" Text="Release margin (°C)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="SpinUpMarginBox" Grid.Row="2" Grid.Column="1"/>
                                 </Grid>
                                 <CheckBox x:Name="BatteryToggle" Style="{StaticResource PlainCheck}"
                                           Content="Hand fans back to Razer while on battery"/>
@@ -630,6 +664,93 @@
                 </Grid>
             </TabItem>
 
+            <!-- ================= monitor ================= -->
+            <TabItem Header="Monitor">
+                <Grid Margin="0,18,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource CardBox}" Padding="24,20">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- header: title, legend with direct values -->
+                            <Grid Grid.Row="0" Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="P A C K A G E   P O W E R"
+                                               Style="{StaticResource MonoLabel}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="last 30 minutes" Style="{StaticResource Mono}"
+                                               Foreground="{StaticResource MutedDim}"
+                                               Margin="14,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                            VerticalAlignment="Center">
+                                    <Ellipse Width="9" Height="9" Fill="#3AAD77" VerticalAlignment="Center"/>
+                                    <TextBlock Text="CPU" Style="{StaticResource Mono}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="CpuWattNow" Text="—" FontSize="19" Margin="10,0,0,0"
+                                               VerticalAlignment="Center"/>
+
+                                    <Ellipse Width="9" Height="9" Fill="#6070DE" Margin="28,0,0,0"
+                                             VerticalAlignment="Center"/>
+                                    <TextBlock Text="GPU" Style="{StaticResource Mono}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="GpuWattNow" Text="—" FontSize="19" Margin="10,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <ui:PowerChart x:Name="PowerChartView" Grid.Row="1" MinHeight="260"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- summary strip -->
+                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource CardBox}" Padding="22,18">
+                            <StackPanel>
+                                <TextBlock Text="A V E R A G E   ·   1   M I N"
+                                           Style="{StaticResource MonoLabel}" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="Avg1MinText" Text="—" Style="{StaticResource Mono}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource CardBox}" Padding="22,18">
+                            <StackPanel>
+                                <TextBlock Text="A V E R A G E   ·   3 0   M I N"
+                                           Style="{StaticResource MonoLabel}" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="Avg30MinText" Text="—" Style="{StaticResource Mono}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="4" Style="{StaticResource CardBox}" Padding="22,18">
+                            <StackPanel>
+                                <TextBlock Text="S O U R C E" Style="{StaticResource MonoLabel}"
+                                           Margin="0,0,0,10"/>
+                                <TextBlock x:Name="PowerSourceText" Text="—" Style="{StaticResource Mono}"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="GetPawnIoButton" Content="Get PawnIO" Margin="0,12,0,0"
+                                        HorizontalAlignment="Left" Visibility="Collapsed"
+                                        Style="{StaticResource OutlineButton}" Click="GetPawnIo_Click"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <!-- ================= power ================= -->
             <TabItem Header="Power">
                 <ScrollViewer Margin="0,18,0,0" VerticalScrollBarVisibility="Auto">
@@ -676,6 +797,16 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="GPU boost" VerticalAlignment="Center"/>
                                         <ComboBox x:Name="GpuBoostBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="If Custom fails" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="FallbackModeBox" Grid.Column="1"
                                                   SelectionChanged="ProfilePower_Changed"/>
                                     </Grid>
 
@@ -746,6 +877,36 @@
 
                                     <TextBlock x:Name="BatteryStatusText" Style="{StaticResource Mono}"
                                                TextWrapping="Wrap" Margin="0,16,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- automation -->
+                            <Border Style="{StaticResource CardBox}" Padding="24,22" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="O N   B A T T E R Y" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,16"/>
+
+                                    <CheckBox x:Name="SwitchOnBatteryToggle" Style="{StaticResource PlainCheck}"
+                                              Content="Change profile when the charger is unplugged"
+                                              Checked="Automation_Changed" Unchecked="Automation_Changed"/>
+
+                                    <Grid Margin="0,14,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Switch to" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="BatteryProfileBox" Grid.Column="1"
+                                                  SelectionChanged="Automation_Changed"/>
+                                    </Grid>
+
+                                    <CheckBox x:Name="RestoreOnAcToggle" Style="{StaticResource PlainCheck}"
+                                              Content="Change back when it is plugged in again"
+                                              Margin="0,14,0,0"
+                                              Checked="Automation_Changed" Unchecked="Automation_Changed"/>
+
+                                    <TextBlock x:Name="AutomationStatusText" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,14,0,0" Text=""/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
