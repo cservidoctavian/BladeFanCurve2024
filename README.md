@@ -1,3 +1,6 @@
+<img width="1277" height="760" alt="image" src="https://github.com/user-attachments/assets/baa0d89c-eaff-456a-be7d-efb98bafeadc" />
+
+
 # Blade Fan Curve
 
 Temperature-driven fan control for Razer Blade laptops on Windows 10 and 11.
