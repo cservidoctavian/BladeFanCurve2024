@@ -1,0 +1,521 @@
+<Window x:Class="BladeFanCurve.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:BladeFanCurve.UI"
+        Title="Blade Fan Curve" Height="880" Width="1420"
+        MinHeight="700" MinWidth="1120"
+        Background="{StaticResource Bg}"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6"
+                            CornerRadius="0" GlassFrameThickness="0"/>
+    </shell:WindowChrome.WindowChrome>
+
+    <Grid Margin="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ======================= title bar ======================= -->
+        <Grid Grid.Row="0" Height="62" Background="Transparent"
+              MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="26,0,0,0">
+                <Border Width="20" Height="20" CornerRadius="6" Background="{StaticResource Accent}"/>
+                <TextBlock Text="Blade Fan Curve" FontSize="15" FontWeight="SemiBold" Margin="12,0,0,0"
+                           VerticalAlignment="Center"/>
+                <TextBlock x:Name="VersionText" Style="{StaticResource Mono}" Text="v1.3"
+                           Margin="10,2,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Margin="0,0,14,0" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button Style="{StaticResource WindowButton}" Content="&#xE921;" Click="Minimise_Click"
+                        ToolTip="Minimise"/>
+                <Button Style="{StaticResource WindowButton}" Content="&#xE922;" Click="Maximise_Click"
+                        ToolTip="Maximise"/>
+                <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Click="CloseToTray_Click"
+                        ToolTip="Close to the notification area"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ======================= status and stat tiles ======================= -->
+        <Grid Grid.Row="1" Margin="26,4,26,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="270"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="270"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- status card -->
+            <Border Grid.Column="0" Style="{StaticResource CardBox}" Padding="26,22">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{StaticResource Muted}"
+                                 VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock x:Name="StatusText" Text="Starting…" FontSize="17" FontWeight="SemiBold"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="DeviceText" Grid.Row="1" Style="{StaticResource Mono}"
+                               Text="—" Margin="21,10,0,0" TextTrimming="CharacterEllipsis"/>
+
+                    <Grid Grid.Row="2" Margin="0,20,0,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox x:Name="EnabledToggle" Style="{StaticResource ToggleSwitch}"
+                                      Checked="EnabledToggle_Changed" Unchecked="EnabledToggle_Changed"/>
+                            <TextBlock Text="Fan control on" FontSize="15" VerticalAlignment="Center"
+                                       Margin="14,0,0,0"/>
+                        </StackPanel>
+                        <Button Content="Hand back to Razer" Style="{StaticResource OutlineButton}"
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Click="RestoreAuto_Click"/>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- CPU tile -->
+            <Border Grid.Column="2" Style="{StaticResource CardBox}" Padding="22,20">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
+                        <TextBlock Text="C P U" Style="{StaticResource MonoLabel}"/>
+                        <TextBlock x:Name="CpuLoadText" Style="{StaticResource Mono}" Text="—"
+                                   HorizontalAlignment="Right"/>
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock x:Name="CpuTempText" Text="—" FontSize="46" FontWeight="Light"
+                                   Foreground="{StaticResource Accent}" LineHeight="54"/>
+                        <TextBlock Text="°C" Style="{StaticResource Mono}" VerticalAlignment="Bottom"
+                                   Margin="6,0,0,10"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2" Height="5" Margin="0,12,0,0">
+                        <Border CornerRadius="3" Background="{StaticResource TrackHi}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="CpuBarFill" Width="0*"/>
+                                <ColumnDefinition x:Name="CpuBarRest" Width="1*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" CornerRadius="3" Background="{StaticResource Accent}"/>
+                        </Grid>
+                    </Grid>
+
+                    <Grid Grid.Row="3" Margin="0,10,0,0">
+                        <TextBlock x:Name="CpuRpmText" Style="{StaticResource Mono}" Text="— rpm"/>
+                        <TextBlock x:Name="CpuMeasText" Style="{StaticResource Mono}" Text=""
+                                   HorizontalAlignment="Right" Foreground="{StaticResource MutedDim}"/>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- GPU tile -->
+            <Border Grid.Column="4" Style="{StaticResource CardBox}" Padding="22,20">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
+                        <TextBlock Text="G P U" Style="{StaticResource MonoLabel}"/>
+                        <TextBlock x:Name="GpuLoadText" Style="{StaticResource Mono}" Text="—"
+                                   HorizontalAlignment="Right"/>
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock x:Name="GpuTempText" Text="—" FontSize="46" FontWeight="Light"
+                                   Foreground="{StaticResource AccentGpu}" LineHeight="54"/>
+                        <TextBlock Text="°C" Style="{StaticResource Mono}" VerticalAlignment="Bottom"
+                                   Margin="6,0,0,10"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2" Height="5" Margin="0,12,0,0">
+                        <Border CornerRadius="3" Background="{StaticResource TrackHi}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="GpuBarFill" Width="0*"/>
+                                <ColumnDefinition x:Name="GpuBarRest" Width="1*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" CornerRadius="3" Background="{StaticResource AccentGpu}"/>
+                        </Grid>
+                    </Grid>
+
+                    <Grid Grid.Row="3" Margin="0,10,0,0">
+                        <TextBlock x:Name="GpuRpmText" Style="{StaticResource Mono}" Text="— rpm"/>
+                        <TextBlock x:Name="GpuMeasText" Style="{StaticResource Mono}" Text=""
+                                   HorizontalAlignment="Right" Foreground="{StaticResource MutedDim}"/>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- sensor warning strip, only visible when the CPU reading is degraded -->
+        <Border x:Name="SensorNoteBar" Grid.Row="2" Margin="26,14,26,0" CornerRadius="10"
+                Background="#1A1710" BorderBrush="#3A3018" BorderThickness="1"
+                Padding="16,11" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+                <Ellipse Width="7" Height="7" Fill="{StaticResource Warn}" VerticalAlignment="Center"
+                         Margin="0,0,12,0"/>
+                <TextBlock x:Name="SensorNoteText" Foreground="{StaticResource Warn}" FontSize="12.5"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ======================= tabs ======================= -->
+        <TabControl Grid.Row="3" Margin="26,20,26,22">
+
+            <!-- ================= fan curves ================= -->
+            <TabItem Header="Fan curves">
+                <Grid Margin="0,18,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- profile row -->
+                    <Grid Grid.Row="0" Margin="0,0,0,18">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="P R O F I L E" Style="{StaticResource MonoLabel}"
+                                       VerticalAlignment="Center" Margin="0,0,18,0"/>
+                            <Border Background="{StaticResource Card}" BorderBrush="{StaticResource CardBorder}"
+                                    BorderThickness="1" CornerRadius="11" Padding="4">
+                                <StackPanel x:Name="ProfileSegments" Orientation="Horizontal"/>
+                            </Border>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="Duplicate" Style="{StaticResource OutlineButton}"
+                                    Click="DuplicateProfile_Click"/>
+                            <Button Content="Delete" Style="{StaticResource OutlineButton}" Margin="8,0,0,0"
+                                    Click="DeleteProfile_Click"/>
+                            <Button Content="Reset" Style="{StaticResource OutlineButton}" Margin="8,0,0,0"
+                                    Click="ResetCurves_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- the two curve cards -->
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource CardBox}" Padding="24,20">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0" Margin="0,0,0,14">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="9" Height="9" CornerRadius="3"
+                                                Background="{StaticResource Accent}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="C P U   F A N" Style="{StaticResource CardTitle}"
+                                                   Margin="11,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="CpuCurveReadout" Style="{StaticResource Mono}"
+                                               HorizontalAlignment="Right" VerticalAlignment="Center" Text=""/>
+                                </Grid>
+
+                                <ui:CurveEditor x:Name="CpuCurveEditor" Grid.Row="1" Accent="#5FD69C"
+                                                CurveChanged="CurveEditor_CurveChanged"/>
+
+                                <Grid Grid.Row="2" Margin="0,12,0,0">
+                                    <TextBlock Text="Temperature °C" Style="{StaticResource Mono}"
+                                               FontSize="11" Foreground="{StaticResource MutedDim}"/>
+                                    <TextBlock Text="Drag to move · double-click to add · right-click to remove"
+                                               Style="{StaticResource Mono}" FontSize="11"
+                                               Foreground="{StaticResource MutedDim}"
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource CardBox}" Padding="24,20">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0" Margin="0,0,0,14">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="9" Height="9" CornerRadius="3"
+                                                Background="{StaticResource AccentGpu}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="G P U   F A N" Style="{StaticResource CardTitle}"
+                                                   Margin="11,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="GpuCurveReadout" Style="{StaticResource Mono}"
+                                               HorizontalAlignment="Right" VerticalAlignment="Center" Text=""/>
+                                </Grid>
+
+                                <ui:CurveEditor x:Name="GpuCurveEditor" Grid.Row="1" Accent="#7D8CF5"
+                                                CurveChanged="CurveEditor_CurveChanged"/>
+
+                                <Grid Grid.Row="2" Margin="0,12,0,0">
+                                    <TextBlock Text="Temperature °C" Style="{StaticResource Mono}"
+                                               FontSize="11" Foreground="{StaticResource MutedDim}"/>
+                                    <TextBlock Text="Drag to move · double-click to add · right-click to remove"
+                                               Style="{StaticResource Mono}" FontSize="11"
+                                               Foreground="{StaticResource MutedDim}"
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- manual override bar -->
+                    <Border Grid.Row="2" Style="{StaticResource CardBox}" Padding="24,18" Margin="0,20,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                <CheckBox x:Name="OverrideToggle" Style="{StaticResource ToggleSwitch}"
+                                          Checked="Override_Changed" Unchecked="Override_Changed"/>
+                                <TextBlock Text="Manual override" FontSize="15" VerticalAlignment="Center"
+                                           Margin="14,0,0,0"/>
+                            </StackPanel>
+
+                            <Slider x:Name="OverrideSlider" Grid.Column="1" Style="{StaticResource FlatSlider}"
+                                    Minimum="2000" Maximum="5000" TickFrequency="100" IsSnapToTickEnabled="True"
+                                    Value="3000" Margin="34,0,28,0" IsEnabled="False"
+                                    ValueChanged="OverrideSlider_ValueChanged"/>
+
+                            <TextBlock x:Name="OverrideValueText" Grid.Column="2" Text="3000 rpm"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="16"
+                                       Foreground="{StaticResource Fg}" VerticalAlignment="Center"
+                                       MinWidth="96" TextAlignment="Right"/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ================= settings ================= -->
+            <TabItem Header="Settings">
+                <ScrollViewer Margin="0,18,0,0" VerticalScrollBarVisibility="Auto">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource CardBox}" Padding="26,24"
+                                VerticalAlignment="Top">
+                            <StackPanel>
+                                <TextBlock Text="S A F E T Y" Style="{StaticResource MonoLabel}"
+                                           Margin="0,0,0,16"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Minimum RPM" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="MinRpmBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Maximum RPM" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="MaxRpmBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="CPU critical °C" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CpuCritBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="GPU critical °C" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="GpuCritBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Sensor timeout (s)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="StaleBox" Grid.Column="1"/>
+                                </Grid>
+                                <CheckBox x:Name="BatteryToggle" Style="{StaticResource PlainCheck}"
+                                          Content="Hand fans back to Razer while on battery"/>
+
+                                <TextBlock Text="T U N I N G" Style="{StaticResource MonoLabel}"
+                                           Margin="0,26,0,16"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Poll interval (ms)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="PollBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Temp fall rate (°C/s)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="FallRateBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Ramp up (RPM/s)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="RampUpBox" Grid.Column="1"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Ramp down (RPM/s)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="RampDownBox" Grid.Column="1"/>
+                                </Grid>
+                                <CheckBox x:Name="SharedFloorToggle" Style="{StaticResource PlainCheck}"
+                                          Content="Shared floor between the two fans"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource CardBox}" Padding="26,24"
+                                VerticalAlignment="Top">
+                            <StackPanel>
+                                <TextBlock Text="S E N S O R S" Style="{StaticResource MonoLabel}"
+                                           Margin="0,0,0,12"/>
+                                <TextBlock x:Name="SensorSourceText" Style="{StaticResource Mono}"
+                                           TextWrapping="Wrap" Margin="0,0,0,14" Text="—"/>
+                                <TextBlock Text="CPU temperature source" Style="{StaticResource Mono}"
+                                           Margin="0,0,0,6"/>
+                                <ComboBox x:Name="CpuSensorCombo" Margin="0,0,0,12"/>
+                                <TextBlock Text="GPU temperature source" Style="{StaticResource Mono}"
+                                           Margin="0,0,0,6"/>
+                                <ComboBox x:Name="GpuSensorCombo" Margin="0,0,0,10"/>
+                                <Button Content="Refresh sensor list" Style="{StaticResource OutlineButton}"
+                                        HorizontalAlignment="Left" Click="RefreshSensors_Click"/>
+
+                                <TextBlock Text="S T A R T U P" Style="{StaticResource MonoLabel}"
+                                           Margin="0,28,0,12"/>
+                                <TextBlock x:Name="StartupStateText" Style="{StaticResource Mono}"
+                                           TextWrapping="Wrap" Text="Checking…" Margin="0,0,0,12"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="InstallStartupButton" Content="Start with Windows"
+                                            Style="{StaticResource OutlineButton}" Click="InstallStartup_Click"/>
+                                    <Button x:Name="RemoveStartupButton" Content="Remove" Margin="8,0,0,0"
+                                            Style="{StaticResource OutlineButton}" Click="RemoveStartup_Click"/>
+                                </StackPanel>
+                                <CheckBox x:Name="StartMinimisedToggle" Style="{StaticResource PlainCheck}"
+                                          Content="Start minimised to the tray" Margin="0,12,0,0"/>
+
+                                <TextBlock Text="D E V I C E" Style="{StaticResource MonoLabel}"
+                                           Margin="0,28,0,12"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="118"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Command delay (ms)" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CmdDelayBox" Grid.Column="1"/>
+                                </Grid>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                                    <Button Content="Apply and save" Style="{StaticResource OutlineButton}"
+                                            Click="SaveSettings_Click"/>
+                                    <Button Content="Open config folder" Margin="8,0,0,0"
+                                            Style="{StaticResource OutlineButton}" Click="OpenFolder_Click"/>
+                                </StackPanel>
+                                <TextBlock x:Name="SettingsStatusText" Style="{StaticResource Mono}"
+                                           TextWrapping="Wrap" Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ================= diagnostics ================= -->
+            <TabItem Header="Diagnostics">
+                <Grid Margin="0,18,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="210"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+                        <Button Content="Run hardware self-test" Style="{StaticResource OutlineButton}"
+                                Click="SelfTest_Click"/>
+                        <Button Content="Find max fan RPM" Margin="8,0,0,0"
+                                Style="{StaticResource OutlineButton}" Click="ProbeMaxRpm_Click"/>
+                        <Button Content="Save full report" Margin="8,0,0,0"
+                                Style="{StaticResource OutlineButton}" Click="SaveReport_Click"/>
+                        <Button Content="Copy" Margin="8,0,0,0"
+                                Style="{StaticResource OutlineButton}" Click="CopyDiagnostics_Click"/>
+                        <Button Content="Open log" Margin="8,0,0,0"
+                                Style="{StaticResource OutlineButton}" Click="OpenLog_Click"/>
+                    </StackPanel>
+
+                    <Border Grid.Row="1" Style="{StaticResource CardBox}" Padding="6">
+                        <TextBox x:Name="DiagnosticsBox" IsReadOnly="True" Background="Transparent"
+                                 FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                 Foreground="{StaticResource Fg}"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 AcceptsReturn="True" TextWrapping="NoWrap"
+                                 Text="Press &quot;Run hardware self-test&quot; to query the controller."/>
+                    </Border>
+
+                    <TextBlock Grid.Row="2" Text="L O G" Style="{StaticResource MonoLabel}"
+                               Margin="0,18,0,10"/>
+
+                    <Border Grid.Row="3" Style="{StaticResource CardBox}" Padding="6">
+                        <ListBox x:Name="LogList" Background="Transparent" BorderThickness="0"
+                                 Foreground="{StaticResource Muted}"
+                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>

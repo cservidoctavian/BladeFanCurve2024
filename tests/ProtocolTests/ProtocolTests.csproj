@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BladeFanCurve.Tests</RootNamespace>
+    <AssemblyName>ProtocolTests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!-- The units under test are linked in rather than referenced, because the app
+       project targets net8.0-windows and cannot be referenced from here. -->
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\RazerReport.cs" Link="Hardware\RazerReport.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\RazerLaptopDevice.cs" Link="Hardware\RazerLaptopDevice.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\KnownModels.cs" Link="Hardware\KnownModels.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\NativeHid.cs" Link="Hardware\NativeHid.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Config\AppConfig.cs" Link="Config\AppConfig.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\FanCurveEvaluator.cs" Link="Control\FanCurveEvaluator.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\FanChannel.cs" Link="Control\FanChannel.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Sensors\SensorSnapshot.cs" Link="Sensors\SensorSnapshot.cs" />
+  </ItemGroup>
+
+</Project>
