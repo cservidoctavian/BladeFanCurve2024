@@ -473,6 +473,374 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- ================= lighting ================= -->
+            <TabItem Header="Lighting">
+                <Grid Margin="0,18,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="270"/>
+                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- effect picker -->
+                    <Border Grid.Column="0" Style="{StaticResource CardBox}" Padding="6,10">
+                        <DockPanel>
+                            <CheckBox x:Name="LightingEnabled" DockPanel.Dock="Top"
+                                      Style="{StaticResource PlainCheck}" Margin="14,4,14,12"
+                                      Content="Keyboard lighting on"
+                                      Checked="Lighting_Changed" Unchecked="Lighting_Changed"/>
+                            <ListBox x:Name="EffectList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     SelectionChanged="EffectList_SelectionChanged"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- preview and controls -->
+                    <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Style="{StaticResource CardBox}" Padding="18,16">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,12">
+                                        <TextBlock Text="P R E V I E W" Style="{StaticResource MonoLabel}"/>
+                                        <TextBlock x:Name="LightingModeText" Style="{StaticResource Mono}"
+                                                   HorizontalAlignment="Right" Text=""/>
+                                    </DockPanel>
+                                    <ui:KeyboardPreview x:Name="Preview" Height="132"/>
+                                    <TextBlock x:Name="EffectDescription" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,12,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBox}" Padding="18,16" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="C O L O U R" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,14"/>
+
+                                    <Grid x:Name="PrimaryRow" Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="86"/>
+                                            <ColumnDefinition Width="36"/>
+                                            <ColumnDefinition Width="104"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Primary" VerticalAlignment="Center"/>
+                                        <Border x:Name="PrimarySwatch" Grid.Column="1" Height="24" Width="24"
+                                                CornerRadius="5" BorderThickness="1"
+                                                BorderBrush="{StaticResource CardBorder}"/>
+                                        <TextBox x:Name="PrimaryHex" Grid.Column="2" Margin="10,0,0,0"
+                                                 LostFocus="Lighting_Changed" KeyDown="HexBox_KeyDown"/>
+                                        <Button Grid.Column="3" Content="Pick" Margin="8,0,0,0"
+                                                Style="{StaticResource OutlineButton}" Click="PickPrimary_Click"/>
+                                        <StackPanel x:Name="PrimaryPresets" Grid.Column="4"
+                                                    Orientation="Horizontal" Margin="12,0,0,0"/>
+                                    </Grid>
+
+                                    <Grid x:Name="SecondaryRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="86"/>
+                                            <ColumnDefinition Width="36"/>
+                                            <ColumnDefinition Width="104"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Secondary" VerticalAlignment="Center"/>
+                                        <Border x:Name="SecondarySwatch" Grid.Column="1" Height="24" Width="24"
+                                                CornerRadius="5" BorderThickness="1"
+                                                BorderBrush="{StaticResource CardBorder}"/>
+                                        <TextBox x:Name="SecondaryHex" Grid.Column="2" Margin="10,0,0,0"
+                                                 LostFocus="Lighting_Changed" KeyDown="HexBox_KeyDown"/>
+                                        <Button Grid.Column="3" Content="Pick" Margin="8,0,0,0"
+                                                Style="{StaticResource OutlineButton}" Click="PickSecondary_Click"/>
+                                        <StackPanel x:Name="SecondaryPresets" Grid.Column="4"
+                                                    Orientation="Horizontal" Margin="12,0,0,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBox}" Padding="18,16" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="B E H A V I O U R" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,14"/>
+
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="122"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="70"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Brightness" VerticalAlignment="Center"/>
+                                        <Slider x:Name="BrightnessSlider" Grid.Column="1" Minimum="0" Maximum="255"
+                                                Style="{StaticResource FlatSlider}" VerticalAlignment="Center"
+                                                ValueChanged="LightingSlider_Changed"/>
+                                        <TextBlock x:Name="BrightnessText" Grid.Column="2" Style="{StaticResource Mono}"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <Grid x:Name="SpeedRow" Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="122"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="70"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Speed" VerticalAlignment="Center"/>
+                                        <Slider x:Name="SpeedSlider" Grid.Column="1" Minimum="0.1" Maximum="4"
+                                                Style="{StaticResource FlatSlider}" VerticalAlignment="Center"
+                                                ValueChanged="LightingSlider_Changed"/>
+                                        <TextBlock x:Name="SpeedText" Grid.Column="2" Style="{StaticResource Mono}"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <Grid x:Name="DirectionRow" Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="122"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Direction" VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <RadioButton x:Name="WaveRight" Content="Right" GroupName="wave"
+                                                         Style="{StaticResource PlainRadio}" Margin="0,0,18,0"
+                                                         Checked="Lighting_Changed"/>
+                                            <RadioButton x:Name="WaveLeft" Content="Left" GroupName="wave"
+                                                         Style="{StaticResource PlainRadio}"
+                                                         Checked="Lighting_Changed"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid x:Name="FpsRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="122"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="70"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Frame rate" VerticalAlignment="Center"/>
+                                        <Slider x:Name="FpsSlider" Grid.Column="1" Minimum="5" Maximum="60"
+                                                Style="{StaticResource FlatSlider}" VerticalAlignment="Center"
+                                                ValueChanged="LightingSlider_Changed"/>
+                                        <TextBlock x:Name="FpsText" Grid.Column="2" Style="{StaticResource Mono}"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock x:Name="LightingStatusText" Style="{StaticResource Mono}"
+                                       Margin="4,14,0,10" TextWrapping="Wrap" Text=""/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ================= power ================= -->
+            <TabItem Header="Power">
+                <ScrollViewer Margin="0,18,0,0" VerticalScrollBarVisibility="Auto">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- profile power -->
+                        <StackPanel Grid.Column="0">
+                            <Border Style="{StaticResource CardBox}" Padding="24,22" VerticalAlignment="Top">
+                                <StackPanel>
+                                    <TextBlock x:Name="ProfilePowerTitle" Text="P R O F I L E"
+                                               Style="{StaticResource MonoLabel}" Margin="0,0,0,6"/>
+                                    <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,16"
+                                               Text="These apply whenever this profile is selected. Leave any of them blank to have the profile not touch that setting."/>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Performance mode" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="PerfModeBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU boost" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="CpuBoostBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="GPU boost" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="GpuBoostBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <TextBlock x:Name="BoostSupportText" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,2,0,14" Text=""/>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Windows power plan" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="PowerPlanBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Power mode" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="PowerOverlayBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Refresh rate" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="ProfileRefreshBox" Grid.Column="1"
+                                                  SelectionChanged="ProfilePower_Changed"/>
+                                    </Grid>
+
+                                    <Button Content="Apply this profile now" Margin="0,18,0,0"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource OutlineButton}" Click="ApplyProfilePower_Click"/>
+                                    <TextBlock x:Name="ProfilePowerStatus" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,12,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- battery -->
+                            <Border Style="{StaticResource CardBox}" Padding="24,22" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="B A T T E R Y   C A R E" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,6"/>
+                                    <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,16"
+                                               Text="Holding the charge below full is the single biggest thing you can do for cell life. Above the limit the laptop simply runs off the adapter."/>
+
+                                    <CheckBox x:Name="ChargeLimitToggle" Style="{StaticResource PlainCheck}"
+                                              Content="Limit how far the battery charges"
+                                              Checked="Battery_Changed" Unchecked="Battery_Changed"/>
+
+                                    <StackPanel x:Name="ChargeLimitRow" Orientation="Horizontal" Margin="0,16,0,0">
+                                        <RadioButton x:Name="Charge60" Content="60%" GroupName="charge"
+                                                     Style="{StaticResource PlainRadio}" Margin="0,0,20,0"
+                                                     Checked="Battery_Changed"/>
+                                        <RadioButton x:Name="Charge80" Content="80%" GroupName="charge"
+                                                     Style="{StaticResource PlainRadio}" Margin="0,0,20,0"
+                                                     Checked="Battery_Changed"/>
+                                        <RadioButton x:Name="Charge100" Content="100%" GroupName="charge"
+                                                     Style="{StaticResource PlainRadio}"
+                                                     Checked="Battery_Changed"/>
+                                    </StackPanel>
+
+                                    <TextBlock x:Name="BatteryStatusText" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,16,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- display -->
+                        <StackPanel Grid.Column="2">
+                            <Border Style="{StaticResource CardBox}" Padding="24,22">
+                                <StackPanel>
+                                    <TextBlock Text="D I S P L A Y" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,16"/>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Refresh rate" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="RefreshRateBox" Grid.Column="1"/>
+                                        <Button Grid.Column="2" Content="Apply" Margin="8,0,0,0"
+                                                Style="{StaticResource OutlineButton}" Click="ApplyRefresh_Click"/>
+                                    </Grid>
+
+                                    <TextBlock x:Name="DisplayModeText" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,4,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBox}" Padding="24,22" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="B L U E   L I G H T" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,16"/>
+
+                                    <CheckBox x:Name="NightLightToggle" Style="{StaticResource PlainCheck}"
+                                              Content="Warm the screen on a schedule"
+                                              Checked="Display_Changed" Unchecked="Display_Changed"/>
+
+                                    <Grid Margin="0,16,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="90"/>
+                                            <ColumnDefinition Width="40"/>
+                                            <ColumnDefinition Width="90"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="From / until" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="NightStartBox" Grid.Column="1"
+                                                 LostFocus="Display_Changed" KeyDown="TimeBox_KeyDown"/>
+                                        <TextBlock Grid.Column="2" Text="until" HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" Style="{StaticResource Mono}"/>
+                                        <TextBox x:Name="NightEndBox" Grid.Column="3"
+                                                 LostFocus="Display_Changed" KeyDown="TimeBox_KeyDown"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="80"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Warmth" VerticalAlignment="Center"/>
+                                        <Slider x:Name="KelvinSlider" Grid.Column="1" Minimum="1200" Maximum="6500"
+                                                Style="{StaticResource FlatSlider}" VerticalAlignment="Center"
+                                                ValueChanged="Kelvin_Changed"/>
+                                        <TextBlock x:Name="KelvinText" Grid.Column="2" Style="{StaticResource Mono}"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                        <Button Content="Preview" Style="{StaticResource OutlineButton}"
+                                                Click="PreviewWarmth_Click"/>
+                                        <Button Content="Reset colour" Margin="8,0,0,0"
+                                                Style="{StaticResource OutlineButton}" Click="ResetColour_Click"/>
+                                    </StackPanel>
+
+                                    <TextBlock x:Name="NightLightStatus" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,14,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBox}" Padding="24,22" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="C O L O U R   P R O F I L E" Style="{StaticResource MonoLabel}"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,14"
+                                               Text="Razer exposes no command for the panel's own gamut mode, so this is the OS-level equivalent: the profile colour-managed apps use. It is not a hardware sRGB clamp."/>
+                                    <ComboBox x:Name="IccProfileBox"/>
+                                    <TextBlock x:Name="IccStatusText" Style="{StaticResource Mono}"
+                                               TextWrapping="Wrap" Margin="0,12,0,0" Text=""/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
             <!-- ================= diagnostics ================= -->
             <TabItem Header="Diagnostics">
                 <Grid Margin="0,18,0,0">

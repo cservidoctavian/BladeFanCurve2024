@@ -1,6 +1,3 @@
-<img width="1277" height="760" alt="image" src="https://github.com/user-attachments/assets/baa0d89c-eaff-456a-be7d-efb98bafeadc" />
-
-
 # Blade Fan Curve
 
 Temperature-driven fan control for Razer Blade laptops on Windows 10 and 11.
@@ -147,6 +144,153 @@ you can add your own. Profiles are switchable from the tray menu.
 
 ---
 
+## Keyboard lighting
+
+The **Lighting** tab drives the Chroma backlight over the same HID channel as fan
+control, so it needs no extra driver and no Synapse.
+
+Effects come in two kinds, and the distinction matters:
+
+**On the keyboard** — one command, then the keyboard's own controller runs the
+effect. Costs nothing, survives the app closing, and keeps going after a reboot.
+
+| Effect | Colours | Speed |
+|---|---|---|
+| Off | — | — |
+| Static | 1 | — |
+| Breathe | 1 | — |
+| Breathe (two colours) | 2 | — |
+| Breathe (random) | — | — |
+| Spectrum | — | — |
+| Wave | — | direction |
+| Reactive — lights the key you press | 1 | 1–4 |
+| Starlight | 1 | 1–3 |
+| Starlight (two colours) | 2 | 1–3 |
+| Starlight (random) | — | 1–3 |
+
+**Rendered here** — the app draws each frame and streams it to the keyboard as a
+custom frame. Anything is possible, at the cost of about seven HID writes per frame.
+
+| Effect | Notes |
+|---|---|
+| Solid | Uniform colour |
+| Gradient | Still fade, first colour to second |
+| Breathe (smooth) | Smoother than the hardware version |
+| Colour cycle | Whole board through the spectrum |
+| Rainbow wave | Spectrum travelling across the keys |
+| Scanner | Bright column sweeping with a trailing fade |
+| Starfield | Keys twinkle at their own pace |
+| Ripple | Rings spreading outward |
+| Rain | Drops falling down the columns |
+| Fire | Heat rising from the space bar |
+| **Thermal** | Colour and fill follow the hottest of CPU and GPU |
+| **Fan meter** | Top rows CPU fan, bottom rows GPU fan |
+
+The last two are the reason lighting lives in this app rather than a separate one:
+they read the same sensor and RPM data the fan curves run on, so the keyboard
+becomes a gauge. Thermal runs blue at 45 °C through green and amber to red at
+95 °C, and the number of lit columns tracks where in that range you are. Effects
+marked with `·` in the list use live telemetry.
+
+Frame rate defaults to 30 fps and is adjustable from 5 to 60. Lighting writes are
+fire-and-forget and are dropped rather than queued whenever the control loop is
+mid-command, so streaming frames can never delay a fan command.
+
+The preview in the window is the actual frame that was sent to the keyboard, not a
+mock-up — for hardware effects, where no frames pass through the app, it falls back
+to a local approximation.
+
+On exit the keyboard is left on a static colour rather than frozen on the last
+rendered frame. Change that with `Lighting.RestoreOnExit` in the config
+(`static`, `spectrum`, `off` or `leave`).
+
+---
+
+## Power profiles
+
+A profile is not just a pair of fan curves. Each one can also set the Razer
+performance mode, CPU/GPU boost, the Windows power plan and power-mode slider, and
+the display refresh rate — and switching profiles applies all of it at once.
+
+| | Silent | Balanced | Turbo |
+|---|---|---|---|
+| Performance mode | Balanced (35 W) | Balanced (35 W) | Gaming (55 W) |
+| CPU / GPU boost | Low | Medium | Boost / High |
+| Windows plan | Power saver | Balanced | High performance |
+| Power mode | Best efficiency | Recommended | Best performance |
+| Refresh rate | 60 Hz | leave | leave |
+
+Every field can be set to **Leave unchanged**, and that is the default for any
+profile you create or that was written by an older version — upgrading never starts
+silently moving your power plan.
+
+**About "wattage".** Razer does not expose a watts figure. What it exposes is the
+performance mode, and that *is* the power target: Balanced runs a 35 W CPU limit and
+Gaming runs 55 W. Real PL1/PL2 control needs a ring-0 driver, the same thing Memory
+Integrity blocks for CPU temperature, so it is not offered here.
+
+Dropping to 60 Hz in the Silent profile is worth more battery than any of the rest
+of this on a 240 Hz panel.
+
+---
+
+## Display
+
+**Refresh rate** is changed through the standard Windows display API. The mode is
+validated before it is applied, so an unsupported rate is refused rather than
+blanking the screen.
+
+**Blue light** is a scheduled warm filter driven through the display LUT, with the
+warmth adjustable from 1200 K to 6500 K. Schedules that cross midnight work
+correctly, which is the normal case and the one a naive comparison gets wrong.
+
+This deliberately does not drive Windows' own Night Light. That feature is
+controlled by an undocumented binary blob in the registry whose format changes
+between builds; driving the gamma ramp is a documented API that does not break. The
+trade-off is that the Windows toggle will not move.
+
+**Colour profile** selects the ICC profile that colour-managed applications use.
+Be clear about what this is not: Razer exposes no command for the panel's own gamut
+mode, so this is the OS-level equivalent, not a hardware sRGB clamp.
+
+**Response time / overdrive is not available.** It is a panel scaler setting with no
+documented command, so rather than guess, it is absent.
+
+The LUT is always reset on exit, including after a crash — a screen left tinted with
+no obvious way to undo it would be worse than no feature at all.
+
+---
+
+## Battery care
+
+Set a charge limit of 60, 80 or 100%. Above the limit the laptop runs from the
+adapter and leaves the cell alone, which is the single biggest thing you can do for
+its lifespan.
+
+Razer exposes a threshold, not a separate "bypass" mode — setting 60 or 80% gets you
+the practical outcome, but it is not a distinct AC-bypass feature and this app does
+not claim to be one.
+
+The threshold is re-sent after resume, because the controller forgets it across a
+suspend.
+
+### A note on how these two are implemented
+
+The charge-limit and CPU/GPU-boost commands are not documented anywhere public that
+could be verified. Guessing *write* bytes at an embedded controller is a different
+risk class from guessing lighting bytes, so both are handled read-first:
+
+1. Probe with the read-only `get` command. A read is non-mutating — unsupported
+   firmware answers "not supported" and nothing happens.
+2. Only if that read succeeds is the corresponding write offered at all.
+3. Every write is confirmed by reading the value back, so a silent no-op is
+   reported as a failure rather than shown as success.
+
+If your firmware does not answer, the Power tab says so plainly and the controls are
+disabled. Nothing is ever written into the dark.
+
+---
+
 ## Safety
 
 Manual fan control on a laptop is exactly as dangerous as the worst curve you can
@@ -272,6 +416,34 @@ Zones: `0x01` CPU fan, `0x02` GPU fan. Modes: `0` balanced, `1` gaming,
 verified against the hardware at runtime by reading the set point back — if it
 doesn't match, the app flips to the other layout and logs that it did.
 
+### Lighting
+
+Two command families exist and which one a keyboard speaks is not implied by its
+product id, so it is probed once with a read-only *get brightness* — nothing visible
+changes — and remembered.
+
+| | Extended (class `0x0F`) | Standard (class `0x03`) |
+|---|---|---|
+| Effect | id `0x02`, args `[varstore, ledId, effectId, …]` | id `0x0A`, args `[effectId, …]` |
+| Brightness | id `0x04`, size `0x03`, args `[varstore, ledId, level]` | id `0x03`, same args |
+| Frame row | id `0x03`, size `0x47`, args `[0, 0, row, startCol, stopCol, rgb…]` | id `0x0B`, size `0x46`, args `[0xFF, row, startCol, stopCol, rgb…]` |
+
+The 2024 Blades use the extended family with `varstore = 0x01` and
+`ledId = 0x05` (backlight). Extended effect ids: `00` none, `01` static,
+`02` breathing, `03` spectrum, `04` wave, `05` reactive, `07` starlight,
+`08` custom frame.
+
+The matrix is **6 rows x 16 columns**. One row of pixels is 48 bytes, which with a
+5-byte header fits inside the report's 80 argument bytes with room to spare. A full
+frame is six row writes plus a latch command telling the controller to display what
+was uploaded.
+
+All of these layouts are asserted byte-for-byte in the test suite against
+OpenRazer's `razerchromacommon.c`, because a wrong layout fails silently — the
+keyboard simply ignores the command.
+
+### Discovery
+
 The control interface is found by probing every Razer HID interface with a
 read-only *get perf mode* command across the known transaction ids
 (`1F 08 3F FF 00 88 9F`) and three reply delays, rather than by hard-coding product
@@ -300,9 +472,10 @@ dotnet publish src\BladeFanCurve -c Release -o publish
 dotnet run --project tests\ProtocolTests -c Release
 ```
 
-The test suite is 90 checks over the report encoding, the CRC, curve
+The test suite is 232 checks over the report encoding, the CRC, curve
 interpolation, the safety clamps, the model table, the HID access strategy and the
-sensor fallback logic, plus a guard on the build settings WPF cannot run under.
+sensor fallback logic, plus guards on the build settings WPF cannot run under and on every XAML style
+being applied to a compatible element type.
 None of it needs Razer hardware attached.
 
 ### Layout
@@ -310,7 +483,13 @@ None of it needs Razer hardware attached.
 ```
 src/BladeFanCurve/
   Hardware/     RazerReport.cs, RazerLaptopDevice.cs,  HID transport and commands
-                NativeHid.cs, KnownModels.cs
+                NativeHid.cs, KnownModels.cs,
+                RazerChroma.cs, RazerPower.cs
+  Lighting/     LightingEngine.cs,                     Chroma effects and the
+                SoftwareEffects.cs                     per-key frame renderer
+  Platform/     WindowsPowerPlan.cs,                   power plans, refresh rate,
+                DisplayControl.cs,                     gamma and the blue-light
+                NightLightService.cs                   schedule
   Sensors/      SensorService.cs                       LibreHardwareMonitor wrapper
   Control/      ControlLoop.cs, FanChannel.cs,         curve engine, watchdogs,
                 FanCurveEvaluator.cs, Log.cs,          logging, logon task
@@ -318,7 +497,7 @@ src/BladeFanCurve/
   Config/       AppConfig.cs, ConfigStore.cs           JSON settings with clamping
   UI/           CurveEditor.cs, TrayManager.cs         curve editor, tray icon
   MainWindow.xaml(.cs), App.xaml(.cs)
-tests/ProtocolTests/                                   51 checks, no hardware needed
+tests/ProtocolTests/                                   232 checks, no hardware needed
 install/                                               logon task scripts
 ```
 

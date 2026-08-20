@@ -201,6 +201,47 @@
                 </Setter>
             </Style>
 
+            <!-- The radio twin of PlainCheck. A style can only be applied to its own
+                 TargetType or a subclass, and RadioButton is a sibling of CheckBox
+                 rather than a descendant, so it needs its own style rather than
+                 borrowing that one. Round indicator, same palette and metrics. -->
+            <Style x:Key="PlainRadio" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{StaticResource Fg}"/>
+                <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Margin" Value="0,6"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <StackPanel Orientation="Horizontal">
+                                <Grid Width="18" Height="18" VerticalAlignment="Center">
+                                    <Ellipse x:Name="ring"
+                                             Fill="{StaticResource Track}"
+                                             Stroke="{StaticResource TrackHi}" StrokeThickness="1"/>
+                                    <Ellipse x:Name="dot" Width="8" Height="8" Visibility="Collapsed"
+                                             Fill="#0A0B0E"/>
+                                </Grid>
+                                <ContentPresenter Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="ring" Property="Fill" Value="{StaticResource Accent}"/>
+                                    <Setter TargetName="ring" Property="Stroke" Value="{StaticResource Accent}"/>
+                                    <Setter TargetName="dot" Property="Visibility" Value="Visible"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ring" Property="Stroke" Value="#3B444F"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- ==================== segmented profile picker ==================== -->
             <Style x:Key="SegmentItem" TargetType="RadioButton">
                 <Setter Property="Cursor" Value="Hand"/>

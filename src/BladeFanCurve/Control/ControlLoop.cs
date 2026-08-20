@@ -3,7 +3,9 @@ using System.IO;
 using System.Text;
 using BladeFanCurve.Config;
 using BladeFanCurve.Hardware;
+using BladeFanCurve.Lighting;
 using BladeFanCurve.Sensors;
+using BladeFanCurve.Platform;
 
 namespace BladeFanCurve.Control;
 
@@ -51,6 +53,12 @@ public sealed class ControlLoop : IDisposable
 
     public ControlStatus Status { get; private set; } = new();
     public string ProbeLog { get; private set; } = "(not probed yet)";
+
+    /// <summary>Keyboard lighting, once a device has been found. Null when unavailable.</summary>
+    public LightingEngine? Lighting { get; private set; }
+
+    /// <summary>Raised when lighting becomes available, so the UI can bind its preview.</summary>
+    public event Action<LightingEngine>? LightingAttached;
     public RazerLaptopDevice? Device => _device;
 
     public ControlLoop(AppConfig config, SensorService sensors)
@@ -102,6 +110,10 @@ public sealed class ControlLoop : IDisposable
 
         try { thread?.Join(TimeSpan.FromSeconds(3)); } catch { /* ignore */ }
 
+        // Stop streaming frames before the device goes away, and leave the keyboard on
+        // a controller-side effect so the last rendered frame does not freeze there.
+        try { Lighting?.RestoreOnExit(); } catch { /* never block the fan restore */ }
+
         RestoreAutoImmediate(reason);
 
         lock (_lock)
@@ -122,7 +134,7 @@ public sealed class ControlLoop : IDisposable
             var device = _device;
             if (device is { IsConnected: true })
             {
-                var ok = device.RestoreAutomaticFans(_config.Device.PerfMode);
+                var ok = device.RestoreAutomaticFans(EffectivePerfMode(_config));
                 Log.Info($"Automatic fan control restored ({reason}){(ok ? "" : " — device did not acknowledge")}.");
             }
         }
@@ -157,19 +169,40 @@ public sealed class ControlLoop : IDisposable
                 _device = null;
             }
         }
+
+        // The EC forgets the charge threshold across suspend, so it has to be re-sent
+        // rather than assumed to have survived.
+        if (_config.Battery.ReapplyChargeLimit && _config.Battery.ChargeLimitEnabled
+                                               && Power is { SupportsChargeLimit: true })
+        {
+            try { ApplyChargeLimit(_config); }
+            catch (Exception ex) { Log.Warn($"Could not re-apply the charge limit: {ex.Message}"); }
+        }
+
         _wake.Set();
     }
 
     public void UpdateConfig(AppConfig config)
     {
+        bool profileChanged;
         lock (_lock)
         {
+            profileChanged = _lastAppliedProfile != config.ActiveProfile;
             _config = config;
             if (_device != null) _device.CommandDelayMs = config.Device.CommandDelayMs;
             // Force the next cycle to re-send, since curves or limits may have moved.
             _cpuFan.MarkSent(-1);
             _gpuFan.MarkSent(-1);
         }
+
+        // A profile is more than its curves, so switching one also moves the
+        // performance mode, the Windows power plan and the refresh rate.
+        if (profileChanged && _device is { IsConnected: true })
+        {
+            try { ApplyProfilePower(config); }
+            catch (Exception ex) { Log.Warn($"Could not apply profile power settings: {ex.Message}"); }
+        }
+
         _wake.Set();
     }
 
@@ -283,10 +316,13 @@ public sealed class ControlLoop : IDisposable
             // If a previous run crashed while in manual mode, undo that before doing anything else.
             if (File.Exists(ConfigStore.ManualModeMarkerPath))
             {
-                device.RestoreAutomaticFans(cfg.Device.PerfMode);
+                device.RestoreAutomaticFans(EffectivePerfMode(cfg));
                 ClearMarker();
                 Log.Info("Cleared stale manual-mode state from a previous run.");
             }
+
+            AttachPower(device, cfg);
+            AttachLighting(device, cfg);
         }
 
         // ---- battery policy -------------------------------------------------
@@ -346,7 +382,7 @@ public sealed class ControlLoop : IDisposable
         var reassertDue = now - _lastAssertAt >= cfg.Tuning.ReassertSeconds;
         if (!_manualEngaged || reassertDue)
         {
-            if (_device!.EnableManualFans(cfg.Device.PerfMode))
+            if (_device!.EnableManualFans(EffectivePerfMode(cfg)))
             {
                 if (!_manualEngaged) Log.Info("Manual fan control engaged.");
                 _manualEngaged = true;
@@ -482,6 +518,196 @@ public sealed class ControlLoop : IDisposable
         return true;
     }
 
+    // ------------------------------------------------------------------- power
+
+    /// <summary>Optional power and battery commands, once probed. Null when unavailable.</summary>
+    public RazerPower? Power { get; private set; }
+
+    /// <summary>What the read-only feature probe found, for the diagnostics report.</summary>
+    public string PowerProbeLog { get; private set; } = "(not probed yet)";
+
+    private string _lastAppliedProfile = "";
+
+    /// <summary>
+    /// Works out which optional power features this firmware has. The probe is
+    /// read-only: no boost level or charge threshold is written until a matching read
+    /// has proven the command exists.
+    /// </summary>
+    private void AttachPower(RazerLaptopDevice device, AppConfig cfg)
+    {
+        try
+        {
+            var power = new RazerPower(device);
+            PowerProbeLog = power.Probe();
+            Power = power;
+            Log.Info(PowerProbeLog.TrimEnd());
+
+            ApplyProfilePower(cfg);
+            if (cfg.Battery.ChargeLimitEnabled) ApplyChargeLimit(cfg);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Power features unavailable: {ex.Message}");
+            Power = null;
+        }
+    }
+
+    /// <summary>
+    /// The performance mode to run: the active profile's choice if it has one,
+    /// otherwise the global device setting. This is Razer's real TDP lever — Balanced
+    /// targets 35 W on the CPU, Gaming 55 W.
+    /// </summary>
+    private static PerfMode EffectivePerfMode(AppConfig cfg)
+    {
+        var wanted = cfg.GetActiveProfile().Power?.PerfMode;
+        if (!string.IsNullOrWhiteSpace(wanted) && Enum.TryParse<PerfMode>(wanted, true, out var mode))
+            return mode;
+
+        return cfg.Device.PerfMode;
+    }
+
+    /// <summary>
+    /// Applies everything a profile controls apart from the fan curves: performance
+    /// mode, CPU/GPU boost, the Windows power scheme and overlay, and the refresh rate.
+    /// Each step is independent — one failing does not stop the others — and each is
+    /// skipped when the profile leaves it unset.
+    /// </summary>
+    public string ApplyProfilePower(AppConfig cfg)
+    {
+        var profile = cfg.GetActiveProfile();
+        var power = profile.Power ?? new ProfilePower();
+        var sb = new StringBuilder();
+        _lastAppliedProfile = profile.Name;
+
+        // ---- Razer performance mode -------------------------------------
+        var device = _device;
+        if (device is { IsConnected: true } && !string.IsNullOrWhiteSpace(power.PerfMode))
+        {
+            var mode = EffectivePerfMode(cfg);
+            var ok = true;
+            foreach (var zone in new[] { FanZone.Cpu, FanZone.Gpu })
+                ok &= device.SetPerfMode(zone, mode, _manualEngaged);
+
+            sb.AppendLine(ok
+                ? $"performance mode: {mode}"
+                : $"performance mode: {mode} — device did not acknowledge");
+        }
+
+        // ---- CPU / GPU boost --------------------------------------------
+        var razerPower = Power;
+        if (razerPower is { SupportsBoost: true })
+        {
+            if (Enum.TryParse<BoostLevel>(power.CpuBoost, true, out var cpuBoost))
+                sb.AppendLine(razerPower.SetBoost(BoostTarget.Cpu, cpuBoost)
+                    ? $"cpu boost: {cpuBoost}"
+                    : $"cpu boost: {cpuBoost} — rejected or did not stick");
+
+            if (Enum.TryParse<BoostLevel>(power.GpuBoost, true, out var gpuBoost))
+                sb.AppendLine(razerPower.SetBoost(BoostTarget.Gpu, gpuBoost)
+                    ? $"gpu boost: {gpuBoost}"
+                    : $"gpu boost: {gpuBoost} — rejected or did not stick");
+        }
+        else if (!string.IsNullOrWhiteSpace(power.CpuBoost))
+        {
+            sb.AppendLine("cpu/gpu boost: not exposed by this firmware, skipped");
+        }
+
+        // ---- Windows power scheme and overlay ---------------------------
+        if (!string.IsNullOrWhiteSpace(power.WindowsPlan) && Guid.TryParse(power.WindowsPlan, out var plan))
+            sb.AppendLine(WindowsPowerPlan.SetActiveScheme(plan)
+                ? "windows power plan set"
+                : "windows power plan: could not be set");
+
+        if (!string.IsNullOrWhiteSpace(power.PowerOverlay))
+        {
+            var overlay = power.PowerOverlay.ToLowerInvariant() switch
+            {
+                "efficiency" => WindowsPowerPlan.OverlayBestEfficiency,
+                "performance" => WindowsPowerPlan.OverlayBestPerformance,
+                _ => WindowsPowerPlan.OverlayNone,
+            };
+            sb.AppendLine(WindowsPowerPlan.SetOverlay(overlay)
+                ? $"power mode: {WindowsPowerPlan.DescribeOverlay(overlay)}"
+                : "power mode overlay: unavailable on this build");
+        }
+
+        // ---- refresh rate ------------------------------------------------
+        if (power.RefreshHz > 0)
+        {
+            DisplayControl.SetRefreshRate(power.RefreshHz, out var message);
+            sb.AppendLine($"display: {message}");
+        }
+
+        var report = sb.ToString().TrimEnd();
+        if (report.Length > 0) Log.Info($"Profile '{profile.Name}' applied — {report.Replace("\r\n", "; ").Replace("\n", "; ")}");
+        return report.Length > 0 ? report : "This profile does not change any power settings.";
+    }
+
+    /// <summary>
+    /// Pushes the configured charge limit to the EC. The controller forgets it across
+    /// a suspend, so this is called again on resume rather than only at startup.
+    /// </summary>
+    public string ApplyChargeLimit(AppConfig cfg)
+    {
+        var power = Power;
+        if (power is not { SupportsChargeLimit: true })
+            return "This firmware does not expose a charge limit.";
+
+        var ok = power.SetChargeLimit(cfg.Battery.ChargeLimitEnabled, cfg.Battery.ChargeLimitPercent);
+        var text = ok
+            ? cfg.Battery.ChargeLimitEnabled
+                ? $"Charging stops at {cfg.Battery.ChargeLimitPercent}%."
+                : "Charge limit off — charging to 100%."
+            : "The controller did not accept the charge limit.";
+
+        Log.Info(text);
+        return text;
+    }
+
+    // ---------------------------------------------------------------- lighting
+
+    /// <summary>
+    /// Keyboard lighting rides on the same HID interface as fan control, so it is set
+    /// up once a device is found and torn down with it. A failure here is never fatal:
+    /// lighting is a nicety, fan control is not.
+    /// </summary>
+    private void AttachLighting(RazerLaptopDevice device, AppConfig cfg)
+    {
+        try
+        {
+            Lighting?.Dispose();
+            var engine = new LightingEngine(device);
+
+            if (!engine.Initialise())
+            {
+                Lighting = null;
+                return;
+            }
+
+            engine.Apply(cfg.Lighting);
+            Lighting = engine;
+            LightingAttached?.Invoke(engine);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Lighting unavailable: {ex.Message}");
+            Lighting = null;
+        }
+    }
+
+    /// <summary>Re-sends the current lighting configuration, e.g. after the user changes it.</summary>
+    public void ApplyLighting(AppConfig cfg)
+    {
+        try
+        {
+            Lighting?.Apply(cfg.Lighting);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not apply lighting: {ex.Message}");
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static bool OnBattery()
@@ -552,6 +778,13 @@ public sealed class ControlLoop : IDisposable
         };
 
         Status = status;
+
+        // Temperature-driven lighting effects read from here rather than opening their
+        // own sensor session.
+        Lighting?.UpdateTelemetry(status.CpuTempC, status.GpuTempC,
+            status.CpuFanTargetRpm, status.GpuFanTargetRpm,
+            cfg.Safety.MinRpm, cfg.Safety.MaxRpm);
+
         try { StatusUpdated?.Invoke(status); } catch { /* UI handler must not break the loop */ }
     }
 
@@ -571,7 +804,7 @@ public sealed class ControlLoop : IDisposable
 
         try
         {
-            if (!device.EnableManualFans(cfg.Device.PerfMode))
+            if (!device.EnableManualFans(EffectivePerfMode(cfg)))
                 return "The device would not accept manual fan mode, so the ceiling cannot be probed.";
 
             WriteMarker();
@@ -650,6 +883,18 @@ public sealed class ControlLoop : IDisposable
         }
 
         sb.AppendLine();
+        sb.AppendLine("=== Optional power features ===");
+        sb.Append(PowerProbeLog);
+
+        sb.AppendLine();
+        sb.AppendLine("=== Windows power ===");
+        sb.Append(WindowsPowerPlan.Describe());
+
+        sb.AppendLine();
+        sb.AppendLine("=== Display ===");
+        sb.Append(DisplayControl.Describe());
+
+        sb.AppendLine();
         sb.AppendLine("=== Sensors ===");
         sb.AppendLine(_sensors.DescribeSources());
 
@@ -662,6 +907,8 @@ public sealed class ControlLoop : IDisposable
     public void Dispose()
     {
         StopAndRestoreAuto("shutting down");
+        Lighting?.Dispose();
+        Lighting = null;
         _device?.Dispose();
         _device = null;
         _wake.Dispose();

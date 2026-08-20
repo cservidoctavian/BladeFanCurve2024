@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using BladeFanCurve.Config;
 using BladeFanCurve.Control;
 using BladeFanCurve.Hardware;
+using BladeFanCurve.Lighting;
+using BladeFanCurve.Platform;
 using BladeFanCurve.Sensors;
 
 namespace BladeFanCurve.Tests;
@@ -57,6 +59,41 @@ internal static class Program
 
         Section("HID access strategy");
         ZeroAccessIsTriedFirst();
+
+        Section("Chroma command encoding");
+        ExtendedStaticMatchesOpenRazer();
+        ExtendedWaveAndSpectrumMatchOpenRazer();
+        ExtendedBreathingVariantsMatchOpenRazer();
+        ReactiveAndStarlightClampTheirSpeeds();
+        BrightnessUsesTheRightCommand();
+        StandardFamilyMatchesOpenRazer();
+
+        Section("Chroma frame packing");
+        FrameRowFitsInsideTheArgumentBlock();
+        FrameRowCarriesPixelsInOrder();
+
+        Section("Colour maths");
+        HexRoundTrips();
+        HsvHitsThePrimaries();
+        ScaleAndLerpStayInRange();
+
+        Section("Software effects");
+        EveryEffectHasAUniqueId();
+        EveryEffectRendersInBounds();
+        ThermalEffectRunsBlueToRed();
+
+        Section("Power profiles");
+        ProfilePowerDefaultsToLeavingEverythingAlone();
+        ShippedProfilesCarryCoherentPowerSettings();
+        ChargeLimitStaysInsideTheAllowedBand();
+
+        Section("Blue-light schedule");
+        ScheduleHandlesMidnightWrap();
+        ScheduleIsOffWhenDisabledOrEmpty();
+
+        Section("XAML styles");
+        EveryStyleReferenceMatchesItsTargetType();
+        EveryStyleReferenceResolves();
 
         Section("Build configuration");
         WpfIncompatibleSettingsAreNotEnabled();
@@ -443,6 +480,552 @@ internal static class Program
         Check("masks widen monotonically",
             modes.Select(m => m.Mask).SequenceEqual(modes.Select(m => m.Mask).OrderBy(m => m)));
         Check("read/write is the last resort", modes[^1].Mask == (0x80000000 | 0x40000000));
+    }
+
+    // ------------------------------------------------------------------ chroma
+    //
+    // Byte layouts are pinned against OpenRazer's razerchromacommon.c. Getting these
+    // wrong is silent — the keyboard simply ignores the command — so they are asserted
+    // literally rather than derived from the same constants the code uses.
+
+    private const byte Led = 0x05;  // BACKLIGHT_LED
+    private const byte Store = 0x01; // VARSTORE
+
+    private static void ExtendedStaticMatchesOpenRazer()
+    {
+        var r = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x09, 0x01,
+            a => { a[5] = 0x01; a[6] = 0x11; a[7] = 0x22; a[8] = 0x33; });
+
+        Check("static: class 0x0F", r.CommandClass == 0x0F);
+        Check("static: command 0x02", r.CommandId == 0x02);
+        Check("static: data size 0x09", r.DataSize == 0x09);
+        Check("static: arg0 varstore", r.Arguments[0] == Store);
+        Check("static: arg1 backlight led", r.Arguments[1] == Led);
+        Check("static: arg2 effect id 0x01", r.Arguments[2] == 0x01);
+        Check("static: arg5 is 0x01", r.Arguments[5] == 0x01);
+        Check("static: rgb at args 6-8",
+            r.Arguments[6] == 0x11 && r.Arguments[7] == 0x22 && r.Arguments[8] == 0x33);
+    }
+
+    private static void ExtendedWaveAndSpectrumMatchOpenRazer()
+    {
+        var wave = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x06, 0x04,
+            a => { a[3] = 0x02; a[4] = 0x28; });
+
+        Check("wave: effect id 0x04", wave.Arguments[2] == 0x04);
+        Check("wave: size 0x06", wave.DataSize == 0x06);
+        Check("wave: direction at arg3", wave.Arguments[3] == 0x02);
+        Check("wave: speed 0x28 at arg4", wave.Arguments[4] == 0x28);
+
+        var spectrum = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x06, 0x03);
+        Check("spectrum: effect id 0x03", spectrum.Arguments[2] == 0x03);
+        Check("spectrum: size 0x06", spectrum.DataSize == 0x06);
+    }
+
+    private static void ExtendedBreathingVariantsMatchOpenRazer()
+    {
+        var random = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x06, 0x02);
+        Check("breathe random: size 0x06", random.DataSize == 0x06);
+        Check("breathe random: no type byte", random.Arguments[3] == 0x00);
+
+        var single = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x09, 0x02,
+            a => { a[3] = 0x01; a[5] = 0x01; a[6] = 0xAA; });
+        Check("breathe single: size 0x09", single.DataSize == 0x09);
+        Check("breathe single: type 0x01 at arg3", single.Arguments[3] == 0x01);
+
+        var dual = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x0C, 0x02,
+            a =>
+            {
+                a[3] = 0x02;
+                a[5] = 0x02;
+                a[6] = 0x10; a[7] = 0x20; a[8] = 0x30;
+                a[9] = 0x40; a[10] = 0x50; a[11] = 0x60;
+            });
+        Check("breathe dual: size 0x0C", dual.DataSize == 0x0C);
+        Check("breathe dual: type 0x02 at arg3", dual.Arguments[3] == 0x02);
+        Check("breathe dual: second colour at args 9-11",
+            dual.Arguments[9] == 0x40 && dual.Arguments[11] == 0x60);
+    }
+
+    private static void ReactiveAndStarlightClampTheirSpeeds()
+    {
+        // Reactive is documented 1..4 and starlight 1..3; out-of-range values must be
+        // clamped rather than sent, because the firmware's behaviour is undefined.
+        foreach (var (input, expected) in new byte[][] { new byte[] { 0, 1 }, new byte[] { 9, 4 } }
+                     .Select(p => (p[0], p[1])))
+        {
+            var speed = Math.Clamp(input, (byte)1, (byte)4);
+            Check($"reactive speed {input} clamps to {expected}", speed == expected);
+        }
+
+        foreach (var (input, expected) in new byte[][] { new byte[] { 0, 1 }, new byte[] { 7, 3 } }
+                     .Select(p => (p[0], p[1])))
+        {
+            var speed = Math.Clamp(input, (byte)1, (byte)3);
+            Check($"starlight speed {input} clamps to {expected}", speed == expected);
+        }
+
+        var reactive = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x09, 0x05,
+            a => { a[4] = 0x03; a[5] = 0x01; });
+        Check("reactive: effect id 0x05", reactive.Arguments[2] == 0x05);
+        Check("reactive: speed at arg4", reactive.Arguments[4] == 0x03);
+
+        var starlight = RazerChroma.BuildExtendedEffect(0x1F, Led, 0x09, 0x07,
+            a => { a[4] = 0x02; a[5] = 0x01; });
+        Check("starlight: effect id 0x07", starlight.Arguments[2] == 0x07);
+    }
+
+    private static void BrightnessUsesTheRightCommand()
+    {
+        var ext = RazerChroma.BuildBrightness(ChromaFamily.Extended, 0x1F, Led, 128);
+        Check("brightness extended: class 0x0F", ext.CommandClass == 0x0F);
+        Check("brightness extended: command 0x04", ext.CommandId == 0x04);
+        Check("brightness extended: size 0x03", ext.DataSize == 0x03);
+        Check("brightness extended: level at arg2", ext.Arguments[2] == 128);
+
+        var std = RazerChroma.BuildBrightness(ChromaFamily.Standard, 0x1F, Led, 200);
+        Check("brightness standard: class 0x03", std.CommandClass == 0x03);
+        Check("brightness standard: command 0x03", std.CommandId == 0x03);
+        Check("brightness standard: level at arg2", std.Arguments[2] == 200);
+    }
+
+    private static void StandardFamilyMatchesOpenRazer()
+    {
+        var stat = RazerChroma.BuildStandardEffect(0x1F, 0x04, 0x06, a => { a[1] = 1; a[2] = 2; a[3] = 3; });
+        Check("standard static: class 0x03 command 0x0A",
+            stat is { CommandClass: 0x03, CommandId: 0x0A });
+        Check("standard static: effect id in arg0", stat.Arguments[0] == 0x06);
+        Check("standard static: rgb at args 1-3", stat.Arguments[3] == 3);
+
+        var breathe = RazerChroma.BuildStandardEffect(0x1F, 0x08, 0x03, a => a[1] = 0x03);
+        Check("standard breathe: effect id 0x03", breathe.Arguments[0] == 0x03);
+        Check("standard breathe: random type 0x03", breathe.Arguments[1] == 0x03);
+    }
+
+    private static void FrameRowFitsInsideTheArgumentBlock()
+    {
+        // 16 columns x 3 bytes plus a 5-byte header is 53, comfortably inside 80.
+        // If the matrix ever grew, this is where it would be caught.
+        var needed = 5 + RazerChroma.Columns * 3;
+        Check($"a frame row needs {needed} of 80 argument bytes", needed <= RazerReport.ArgumentCount);
+    }
+
+    private static void FrameRowCarriesPixelsInOrder()
+    {
+        var frame = new RgbColor[RazerChroma.Rows, RazerChroma.Columns];
+        for (var c = 0; c < RazerChroma.Columns; c++)
+            frame[2, c] = new RgbColor((byte)(c + 1), (byte)(c + 101), (byte)(c + 201));
+
+        var ext = RazerChroma.BuildFrameRow(ChromaFamily.Extended, 0x1F, 2, frame);
+        Check("frame extended: class 0x0F command 0x03",
+            ext is { CommandClass: 0x0F, CommandId: 0x03 });
+        Check("frame extended: data size 0x47", ext.DataSize == 0x47);
+        Check("frame extended: args 0-1 are zero", ext.Arguments[0] == 0 && ext.Arguments[1] == 0);
+        Check("frame extended: row index at arg2", ext.Arguments[2] == 2);
+        Check("frame extended: column span 0..15",
+            ext.Arguments[3] == 0 && ext.Arguments[4] == RazerChroma.Columns - 1);
+        Check("frame extended: first pixel at arg5",
+            ext.Arguments[5] == 1 && ext.Arguments[6] == 101 && ext.Arguments[7] == 201);
+        Check("frame extended: last pixel at the end",
+            ext.Arguments[5 + 15 * 3] == 16 && ext.Arguments[5 + 15 * 3 + 2] == 216);
+
+        var std = RazerChroma.BuildFrameRow(ChromaFamily.Standard, 0x1F, 2, frame);
+        Check("frame standard: class 0x03 command 0x0B",
+            std is { CommandClass: 0x03, CommandId: 0x0B });
+        Check("frame standard: data size 0x46", std.DataSize == 0x46);
+        Check("frame standard: 0xFF marker at arg0", std.Arguments[0] == 0xFF);
+        Check("frame standard: row index at arg1", std.Arguments[1] == 2);
+        Check("frame standard: first pixel at arg4", std.Arguments[4] == 1);
+    }
+
+    // ------------------------------------------------------------- colour maths
+
+    private static void HexRoundTrips()
+    {
+        Check("#00FF88 parses", RgbColor.FromHex("#00FF88") == new RgbColor(0, 255, 136));
+        Check("hex without hash parses", RgbColor.FromHex("3355FF") == new RgbColor(0x33, 0x55, 0xFF));
+        Check("round trips", RgbColor.FromHex("#AB12CD").ToHex() == "#AB12CD");
+        Check("garbage falls back to black", RgbColor.FromHex("nope") == RgbColor.Black);
+        Check("null falls back to black", RgbColor.FromHex(null) == RgbColor.Black);
+    }
+
+    private static void HsvHitsThePrimaries()
+    {
+        Check("hue 0 is red", RgbColor.FromHsv(0) == new RgbColor(255, 0, 0));
+        Check("hue 120 is green", RgbColor.FromHsv(120) == new RgbColor(0, 255, 0));
+        Check("hue 240 is blue", RgbColor.FromHsv(240) == new RgbColor(0, 0, 255));
+        Check("hue wraps past 360", RgbColor.FromHsv(480) == RgbColor.FromHsv(120));
+        Check("negative hue wraps", RgbColor.FromHsv(-120) == RgbColor.FromHsv(240));
+        Check("zero value is black", RgbColor.FromHsv(200, 1, 0) == RgbColor.Black);
+    }
+
+    private static void ScaleAndLerpStayInRange()
+    {
+        var c = new RgbColor(200, 100, 50);
+        Check("scale by 0 is black", c.Scale(0) == RgbColor.Black);
+        Check("scale by 1 is unchanged", c.Scale(1) == c);
+        Check("scale above 1 clamps", c.Scale(5).R == 255);
+        Check("lerp at 0 is the first colour", RgbColor.Lerp(c, RgbColor.Black, 0) == c);
+        Check("lerp at 1 is the second colour", RgbColor.Lerp(c, RgbColor.Black, 1) == RgbColor.Black);
+        Check("lerp clamps out-of-range t", RgbColor.Lerp(c, RgbColor.Black, 4) == RgbColor.Black);
+    }
+
+    // ---------------------------------------------------------- software effects
+
+    private static void EveryEffectHasAUniqueId()
+    {
+        var ids = EffectCatalog.All.Select(e => e.Id).ToList();
+        Check("effect ids are unique", ids.Distinct().Count() == ids.Count);
+        Check("every effect has a name", EffectCatalog.All.All(e => !string.IsNullOrWhiteSpace(e.Name)));
+        Check("every effect has a description",
+            EffectCatalog.All.All(e => !string.IsNullOrWhiteSpace(e.Description)));
+        Check("lookup is case insensitive", EffectCatalog.Find("FIRE") != null);
+        Check("unknown id returns null", EffectCatalog.Find("nope") == null);
+    }
+
+    /// <summary>
+    /// Every effect is run for a few simulated seconds. Effects allocate their own
+    /// state lazily, so this also catches an effect that indexes past the matrix.
+    /// </summary>
+    private static void EveryEffectRendersInBounds()
+    {
+        foreach (var effect in EffectCatalog.All)
+        {
+            var ctx = new EffectContext
+            {
+                Rng = new Random(1),
+                CpuTempC = 72,
+                GpuTempC = 65,
+                CpuRpm = 3200,
+                GpuRpm = 2800,
+            };
+
+            var frame = new RgbColor[RazerChroma.Rows, RazerChroma.Columns];
+            var threw = false;
+
+            try
+            {
+                effect.Reset(ctx);
+                for (var i = 0; i < 90; i++)
+                {
+                    ctx.Time = i / 30.0;
+                    ctx.Delta = 1 / 30.0;
+                    effect.Render(frame, ctx);
+                }
+            }
+            catch
+            {
+                threw = true;
+            }
+
+            Check($"{effect.Id} renders without throwing", !threw);
+        }
+    }
+
+    private static void ThermalEffectRunsBlueToRed()
+    {
+        var cold = ThermalEffect.ColourFor(0);
+        var mid = ThermalEffect.ColourFor(0.5);
+        var hot = ThermalEffect.ColourFor(1);
+
+        Check("thermal cold is blue dominant", cold.B > cold.R);
+        Check("thermal hot is red dominant", hot.R > hot.B);
+        Check("thermal midpoint is not blue dominant", mid.B <= mid.R || mid.G > mid.B);
+
+        // The gauge must not report cold when the sensor is missing.
+        var ctx = new EffectContext { CpuTempC = null, GpuTempC = null };
+        var frame = new RgbColor[RazerChroma.Rows, RazerChroma.Columns];
+        new ThermalEffect().Render(frame, ctx);
+        Check("thermal with no reading is not full brightness", frame[0, 0].R < 200);
+    }
+
+    // ------------------------------------------------------------ power profiles
+
+    /// <summary>
+    /// A config written by an older version has no power block. Upgrading must not
+    /// silently start changing the Windows power plan or the refresh rate, so every
+    /// field has to default to "leave it alone".
+    /// </summary>
+    private static void ProfilePowerDefaultsToLeavingEverythingAlone()
+    {
+        var power = new ProfilePower();
+        Check("perf mode defaults to unset", power.PerfMode == "");
+        Check("cpu boost defaults to unset", power.CpuBoost == "");
+        Check("gpu boost defaults to unset", power.GpuBoost == "");
+        Check("windows plan defaults to unset", power.WindowsPlan == "");
+        Check("power overlay defaults to unset", power.PowerOverlay == "");
+        Check("refresh rate defaults to 0 meaning leave alone", power.RefreshHz == 0);
+
+        var bare = new Profile();
+        Check("a bare profile has a power block", bare.Power != null);
+        Check("cloning carries the power block", bare.Clone().Power != null);
+
+        // A clone must be independent, or editing one profile would edit another.
+        var original = new Profile { Power = { PerfMode = "Gaming", RefreshHz = 240 } };
+        var copy = original.Clone();
+        copy.Power.PerfMode = "Balanced";
+        Check("clone does not share the power block", original.Power.PerfMode == "Gaming");
+    }
+
+    private static void ShippedProfilesCarryCoherentPowerSettings()
+    {
+        var cfg = AppConfig.CreateDefault();
+        var names = cfg.Profiles.Select(p => p.Name).ToList();
+
+        Check("ships Silent, Balanced and Turbo",
+            names.Contains("Silent") && names.Contains("Balanced") && names.Contains("Turbo"));
+
+        var silent = cfg.Profiles.First(p => p.Name == "Silent");
+        var turbo = cfg.Profiles.First(p => p.Name == "Turbo");
+
+        Check("silent uses the low power target", silent.Power.PerfMode == "Balanced");
+        Check("turbo uses the high power target", turbo.Power.PerfMode == "Gaming");
+        Check("silent biases toward efficiency", silent.Power.PowerOverlay == "efficiency");
+        Check("turbo biases toward performance", turbo.Power.PowerOverlay == "performance");
+        Check("silent drops the refresh rate", silent.Power.RefreshHz == 60);
+        Check("turbo leaves the refresh rate to the user", turbo.Power.RefreshHz == 0);
+
+        foreach (var p in cfg.Profiles)
+        {
+            if (string.IsNullOrEmpty(p.Power.WindowsPlan)) continue;
+            Check($"{p.Name} names a parseable power plan guid",
+                Guid.TryParse(p.Power.WindowsPlan, out _));
+        }
+
+        // The boost levels each profile asks for must actually exist in the enum.
+        foreach (var p in cfg.Profiles)
+        {
+            if (!string.IsNullOrEmpty(p.Power.CpuBoost))
+                Check($"{p.Name} cpu boost is a real level",
+                    Enum.TryParse<BoostLevel>(p.Power.CpuBoost, true, out _));
+            if (!string.IsNullOrEmpty(p.Power.GpuBoost))
+                Check($"{p.Name} gpu boost is a real level",
+                    Enum.TryParse<BoostLevel>(p.Power.GpuBoost, true, out _));
+        }
+    }
+
+    private static void ChargeLimitStaysInsideTheAllowedBand()
+    {
+        Check("the floor is 50%", RazerPower.MinChargeLimit == 50);
+        Check("the ceiling is 100%", RazerPower.MaxChargeLimit == 100);
+
+        foreach (var (input, expected) in new[] { (10, 50), (60, 60), (80, 80), (150, 100) })
+            Check($"{input}% clamps to {expected}%",
+                Math.Clamp(input, RazerPower.MinChargeLimit, RazerPower.MaxChargeLimit) == expected);
+
+        var settings = new BatterySettings();
+        Check("charge limit is off by default", !settings.ChargeLimitEnabled);
+        Check("default limit is 80%", settings.ChargeLimitPercent == 80);
+        Check("the limit is re-applied after sleep by default", settings.ReapplyChargeLimit);
+    }
+
+    // ---------------------------------------------------------- blue-light schedule
+
+    /// <summary>
+    /// The normal case is a schedule that crosses midnight, which is exactly where a
+    /// naive start <= now < end comparison breaks.
+    /// </summary>
+    private static void ScheduleHandlesMidnightWrap()
+    {
+        var overnight = new DisplaySettings
+        {
+            NightLightEnabled = true,
+            NightLightStartMinutes = 21 * 60, // 21:00
+            NightLightEndMinutes = 7 * 60,    // 07:00
+        };
+
+        Check("22:00 is inside an overnight window",
+            NightLightService.IsWithinSchedule(new TimeSpan(22, 0, 0), overnight));
+        Check("02:00 is inside an overnight window",
+            NightLightService.IsWithinSchedule(new TimeSpan(2, 0, 0), overnight));
+        Check("21:00 exactly is inside",
+            NightLightService.IsWithinSchedule(new TimeSpan(21, 0, 0), overnight));
+        Check("07:00 exactly is outside",
+            !NightLightService.IsWithinSchedule(new TimeSpan(7, 0, 0), overnight));
+        Check("12:00 is outside an overnight window",
+            !NightLightService.IsWithinSchedule(new TimeSpan(12, 0, 0), overnight));
+
+        var daytime = new DisplaySettings
+        {
+            NightLightEnabled = true,
+            NightLightStartMinutes = 9 * 60,
+            NightLightEndMinutes = 17 * 60,
+        };
+
+        Check("12:00 is inside a same-day window",
+            NightLightService.IsWithinSchedule(new TimeSpan(12, 0, 0), daytime));
+        Check("20:00 is outside a same-day window",
+            !NightLightService.IsWithinSchedule(new TimeSpan(20, 0, 0), daytime));
+        Check("03:00 is outside a same-day window",
+            !NightLightService.IsWithinSchedule(new TimeSpan(3, 0, 0), daytime));
+    }
+
+    private static void ScheduleIsOffWhenDisabledOrEmpty()
+    {
+        // Start == end is an empty window, not a 24-hour one.
+        var empty = new DisplaySettings
+        {
+            NightLightEnabled = true,
+            NightLightStartMinutes = 600,
+            NightLightEndMinutes = 600,
+        };
+        Check("an empty window never matches",
+            !NightLightService.IsWithinSchedule(new TimeSpan(10, 0, 0), empty));
+
+        var defaults = new DisplaySettings();
+        Check("blue light is off by default", !defaults.NightLightEnabled);
+        Check("default warmth is a usable 3400 K", defaults.NightLightKelvin == 3400);
+        Check("default window is 21:00 to 07:00",
+            defaults.NightLightStartMinutes == 1260 && defaults.NightLightEndMinutes == 420);
+    }
+
+    // -------------------------------------------------------------- xaml styles
+    //
+    // WPF only applies a Style to its TargetType or a subclass of it. Getting this
+    // wrong throws "Set property FrameworkElement.Style threw an exception" at the
+    // moment the element is realised — and because a TabControl builds tab content
+    // lazily, that can be long after startup, on a tab this machine cannot render.
+    // So the pairing is checked statically instead.
+
+    /// <summary>Enough of the WPF hierarchy to judge the controls actually used here.</summary>
+    private static readonly Dictionary<string, string> BaseType = new()
+    {
+        ["Button"] = "ButtonBase",
+        ["RepeatButton"] = "ButtonBase",
+        ["ToggleButton"] = "ButtonBase",
+        ["CheckBox"] = "ToggleButton",
+        ["RadioButton"] = "ToggleButton",
+        ["ButtonBase"] = "ContentControl",
+        ["ListBoxItem"] = "ContentControl",
+        ["ComboBoxItem"] = "ContentControl",
+        ["TabItem"] = "HeaderedContentControl",
+        ["HeaderedContentControl"] = "ContentControl",
+        ["ContentControl"] = "Control",
+        ["ComboBox"] = "Selector",
+        ["ListBox"] = "Selector",
+        ["TabControl"] = "Selector",
+        ["Selector"] = "ItemsControl",
+        ["ItemsControl"] = "Control",
+        ["TextBox"] = "TextBoxBase",
+        ["TextBoxBase"] = "Control",
+        ["Slider"] = "RangeBase",
+        ["ScrollBar"] = "RangeBase",
+        ["ProgressBar"] = "RangeBase",
+        ["RangeBase"] = "Control",
+        ["Thumb"] = "Control",
+        ["Control"] = "FrameworkElement",
+        ["TextBlock"] = "FrameworkElement",
+        ["Border"] = "Decorator",
+        ["Decorator"] = "FrameworkElement",
+        ["Ellipse"] = "Shape",
+        ["Path"] = "Shape",
+        ["Rectangle"] = "Shape",
+        ["Shape"] = "FrameworkElement",
+    };
+
+    private static bool IsAssignableTo(string element, string target)
+    {
+        for (var current = element; current != null; BaseType.TryGetValue(current, out current!))
+        {
+            if (current == target) return true;
+            if (!BaseType.ContainsKey(current)) return false;
+        }
+
+        return false;
+    }
+
+    private static Dictionary<string, string> StyleTargets(string appXaml) =>
+        Regex.Matches(appXaml, @"<Style\s+x:Key=""(?<key>[^""]+)""\s+TargetType=""(?:\{x:Type\s+)?(?<type>[A-Za-z]+)\}?""")
+            .ToDictionary(m => m.Groups["key"].Value, m => m.Groups["type"].Value);
+
+    private static List<(string Element, string Key, int Line)> StyleUses(string xaml)
+    {
+        var uses = new List<(string, string, int)>();
+        var lines = xaml.Split('\n');
+
+        // Elements can span lines, so track the most recent opening tag and attach any
+        // StaticResource style reference found before the tag closes.
+        var currentTag = "";
+        for (var i = 0; i < lines.Length; i++)
+        {
+            foreach (Match tag in Regex.Matches(lines[i], @"<(?<name>[A-Za-z][A-Za-z0-9.]*)\b"))
+            {
+                var name = tag.Groups["name"].Value;
+                if (name.Contains('.')) continue; // property element, e.g. <Grid.RowDefinitions>
+                currentTag = name;
+            }
+
+            foreach (Match use in Regex.Matches(lines[i], @"Style=""\{StaticResource\s+(?<key>[A-Za-z0-9_]+)\}"""))
+                if (currentTag.Length > 0)
+                    uses.Add((currentTag, use.Groups["key"].Value, i + 1));
+        }
+
+        return uses;
+    }
+
+    private static void EveryStyleReferenceMatchesItsTargetType()
+    {
+        var (app, windows) = LoadXaml();
+        if (app == null) { Check("App.xaml was found", false); return; }
+
+        var targets = StyleTargets(app);
+        Check("styles were found in App.xaml", targets.Count > 0);
+
+        var checkedCount = 0;
+        var bad = new List<string>();
+
+        foreach (var (file, xaml) in windows)
+        foreach (var (element, key, line) in StyleUses(xaml))
+        {
+            if (!targets.TryGetValue(key, out var target)) continue;
+            if (!BaseType.ContainsKey(element) && element != target) continue; // unknown control, skip
+
+            checkedCount++;
+            if (!IsAssignableTo(element, target))
+                bad.Add($"{file}:{line} applies '{key}' (TargetType={target}) to <{element}>");
+        }
+
+        Check($"{checkedCount} style references were checked", checkedCount > 0);
+        foreach (var problem in bad) Check($"MISMATCH {problem}", false);
+        Check("every style is applied to a compatible element", bad.Count == 0);
+    }
+
+    private static void EveryStyleReferenceResolves()
+    {
+        var (app, windows) = LoadXaml();
+        if (app == null) return;
+
+        var targets = StyleTargets(app);
+        // Implicit styles have no key, and keyed non-Style resources can be referenced too.
+        var allKeys = Regex.Matches(app, @"x:Key=""(?<key>[^""]+)""")
+            .Select(m => m.Groups["key"].Value).ToHashSet();
+
+        var missing = new List<string>();
+        foreach (var (file, xaml) in windows)
+        foreach (var (_, key, line) in StyleUses(xaml))
+            if (!allKeys.Contains(key))
+                missing.Add($"{file}:{line} references undefined style '{key}'");
+
+        foreach (var problem in missing) Check($"UNDEFINED {problem}", false);
+        Check("every referenced style is defined", missing.Count == 0);
+        Check("keyed styles carry a target type", targets.Count > 0);
+    }
+
+    private static (string? App, List<(string Name, string Xaml)> Windows) LoadXaml()
+    {
+        var csproj = FindAppProject();
+        if (csproj == null) return (null, new List<(string, string)>());
+
+        var dir = Path.GetDirectoryName(csproj)!;
+        var appPath = Path.Combine(dir, "App.xaml");
+        if (!File.Exists(appPath)) return (null, new List<(string, string)>());
+
+        var windows = Directory.EnumerateFiles(dir, "*.xaml", SearchOption.AllDirectories)
+            .Where(f => !string.Equals(Path.GetFileName(f), "App.xaml", StringComparison.OrdinalIgnoreCase))
+            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
+            .ToList();
+
+        return (File.ReadAllText(appPath), windows);
     }
 
     // ------------------------------------------------------------- build config

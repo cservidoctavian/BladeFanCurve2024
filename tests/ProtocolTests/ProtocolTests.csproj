@@ -18,6 +18,13 @@
     <Compile Include="..\..\src\BladeFanCurve\Hardware\RazerLaptopDevice.cs" Link="Hardware\RazerLaptopDevice.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Hardware\KnownModels.cs" Link="Hardware\KnownModels.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Hardware\NativeHid.cs" Link="Hardware\NativeHid.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\RazerChroma.cs" Link="Hardware\RazerChroma.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Lighting\SoftwareEffects.cs" Link="Lighting\SoftwareEffects.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Hardware\RazerPower.cs" Link="Hardware\RazerPower.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Platform\NightLightService.cs" Link="Platform\NightLightService.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Platform\DisplayControl.cs" Link="Platform\DisplayControl.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Control\Log.cs" Link="Control\Log.cs" />
+    <Compile Include="..\..\src\BladeFanCurve\Config\ConfigStore.cs" Link="Config\ConfigStore.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Config\AppConfig.cs" Link="Config\AppConfig.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Control\FanCurveEvaluator.cs" Link="Control\FanCurveEvaluator.cs" />
     <Compile Include="..\..\src\BladeFanCurve\Control\FanChannel.cs" Link="Control\FanChannel.cs" />

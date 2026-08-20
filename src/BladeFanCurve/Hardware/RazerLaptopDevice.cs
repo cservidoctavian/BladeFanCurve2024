@@ -312,6 +312,34 @@ public sealed class RazerLaptopDevice : IDisposable
 
     // ---------------------------------------------------------------- transport
 
+    /// <summary>Sends an arbitrary report and waits for the reply. Used by the lighting layer.</summary>
+    public bool TrySend(RazerReport request, out RazerReport? reply) => TrySendReceive(request, out reply);
+
+    /// <summary>
+    /// Fire-and-forget write for streaming lighting frames: no read-back, and it gives
+    /// up rather than queue if the control loop is mid-command. A dropped lighting
+    /// frame is invisible; a fan command delayed behind 30 fps of pixel data is not.
+    /// </summary>
+    public bool TrySendNoReply(RazerReport request)
+    {
+        if (!Monitor.TryEnter(_io, 15)) return false;
+
+        try
+        {
+            var handle = _handle;
+            if (handle is null || handle.IsInvalid || handle.IsClosed) return false;
+            return NativeHid.SetFeature(handle, request.ToWireBytes(_featureLength));
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            Monitor.Exit(_io);
+        }
+    }
+
     private bool TrySendReceive(RazerReport request, out RazerReport? reply)
     {
         reply = null;

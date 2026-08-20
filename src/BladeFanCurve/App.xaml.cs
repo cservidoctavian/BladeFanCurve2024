@@ -181,6 +181,11 @@ public partial class App : Application
     {
         try { _loop?.RestoreAutoImmediate(reason); }
         catch { /* nothing left to do */ }
+
+        // A tinted screen left behind after a crash would be baffling and there is no
+        // obvious way for the user to undo it, so the LUT is always put back.
+        try { Platform.DisplayControl.ResetColour(); }
+        catch { /* nothing left to do */ }
     }
 
     private void ShutdownCleanly(string reason)

@@ -63,13 +63,75 @@ public sealed class FanCurveConfig
     };
 }
 
+/// <summary>
+/// The power side of a profile. Every field defaults to "leave it alone" so that a
+/// config written by an older version does not suddenly start changing the Windows
+/// power plan or the refresh rate after an upgrade. Only the shipped default profiles
+/// carry opinionated values.
+/// </summary>
+public sealed class ProfilePower
+{
+    /// <summary>Razer performance mode: Balanced, Gaming, Creator, Custom. Empty leaves it.</summary>
+    public string PerfMode { get; set; } = "";
+
+    /// <summary>Low, Medium, High, Boost. Only applied in Custom mode, and only if the firmware exposes it.</summary>
+    public string CpuBoost { get; set; } = "";
+
+    /// <summary>Low, Medium, High.</summary>
+    public string GpuBoost { get; set; } = "";
+
+    /// <summary>Windows power scheme GUID, or empty to leave the current one.</summary>
+    public string WindowsPlan { get; set; } = "";
+
+    /// <summary>Power-mode overlay: efficiency, recommended, performance. Empty leaves it.</summary>
+    public string PowerOverlay { get; set; } = "";
+
+    /// <summary>Display refresh rate in Hz, or 0 to leave it. Dropping to 60 Hz is a real battery saving.</summary>
+    public int RefreshHz { get; set; }
+
+    public ProfilePower Clone() => (ProfilePower)MemberwiseClone();
+}
+
 public sealed class Profile
 {
     public string Name { get; set; } = "Default";
     public FanCurveConfig CpuFan { get; set; } = FanCurveConfig.DefaultCpu();
     public FanCurveConfig GpuFan { get; set; } = FanCurveConfig.DefaultGpu();
+    public ProfilePower Power { get; set; } = new();
 
-    public Profile Clone() => new() { Name = Name, CpuFan = CpuFan.Clone(), GpuFan = GpuFan.Clone() };
+    public Profile Clone() => new()
+    {
+        Name = Name,
+        CpuFan = CpuFan.Clone(),
+        GpuFan = GpuFan.Clone(),
+        Power = Power.Clone(),
+    };
+}
+
+public sealed class DisplaySettings
+{
+    public bool NightLightEnabled { get; set; }
+
+    /// <summary>Minutes past midnight. Default 21:00.</summary>
+    public int NightLightStartMinutes { get; set; } = 21 * 60;
+
+    /// <summary>Minutes past midnight. Default 07:00, i.e. the schedule crosses midnight.</summary>
+    public int NightLightEndMinutes { get; set; } = 7 * 60;
+
+    /// <summary>1200 (very warm) to 6500 (neutral).</summary>
+    public int NightLightKelvin { get; set; } = 3400;
+}
+
+public sealed class BatterySettings
+{
+    /// <summary>Stop charging at <see cref="ChargeLimitPercent"/> to reduce cell wear.</summary>
+    public bool ChargeLimitEnabled { get; set; }
+
+    /// <summary>50-100. 100 means charge normally.</summary>
+    public int ChargeLimitPercent { get; set; } = 80;
+
+    /// <summary>Re-apply the limit on resume and at intervals, since the EC forgets it across sleep.</summary>
+    public bool ReapplyChargeLimit { get; set; } = true;
 }
 
 public sealed class SafetySettings
@@ -144,9 +206,44 @@ public sealed class DeviceSettings
     public int SetRpmArg0 { get; set; } = 0x01;
 }
 
+public sealed class LightingSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Either a hardware effect id (prefixed "hw-", run by the keyboard controller) or a
+    /// software effect id from <see cref="Lighting.EffectCatalog"/>, rendered here.
+    /// </summary>
+    public string Effect { get; set; } = "hw-static";
+
+    public string PrimaryColor { get; set; } = "#00FF88";
+    public string SecondaryColor { get; set; } = "#3355FF";
+
+    /// <summary>0-255.</summary>
+    public int Brightness { get; set; } = 255;
+
+    /// <summary>Multiplier applied to time in software effects.</summary>
+    public double Speed { get; set; } = 1.0;
+
+    /// <summary>1 = right, 2 = left.</summary>
+    public int WaveDirection { get; set; } = 1;
+
+    /// <summary>1 (fastest) to 4 (slowest).</summary>
+    public int ReactiveSpeed { get; set; } = 2;
+
+    /// <summary>1 (fastest) to 3 (slowest).</summary>
+    public int StarlightSpeed { get; set; } = 2;
+
+    /// <summary>Frame rate for software effects. Each frame is seven HID writes.</summary>
+    public int SoftwareFps { get; set; } = 30;
+
+    /// <summary>What to leave on the keyboard at exit: static, spectrum, off or leave.</summary>
+    public string RestoreOnExit { get; set; } = "static";
+}
+
 public sealed class AppConfig
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
     public bool Enabled { get; set; } = true;
     public bool StartMinimized { get; set; } = true;
     public string ActiveProfile { get; set; } = "Balanced";
@@ -157,6 +254,9 @@ public sealed class AppConfig
     public SafetySettings Safety { get; set; } = new();
     public TuningSettings Tuning { get; set; } = new();
     public DeviceSettings Device { get; set; } = new();
+    public LightingSettings Lighting { get; set; } = new();
+    public DisplaySettings Display { get; set; } = new();
+    public BatterySettings Battery { get; set; } = new();
 
     public Profile GetActiveProfile()
     {
@@ -173,6 +273,17 @@ public sealed class AppConfig
         {
             new Profile
             {
+                // Quiet and cool: the low TDP mode, the power-saver plan, and 60 Hz,
+                // which on a 240 Hz panel is a larger battery saving than anything else here.
+                Power = new ProfilePower
+                {
+                    PerfMode = "Balanced",
+                    CpuBoost = "Low",
+                    GpuBoost = "Low",
+                    WindowsPlan = "a1841308-3541-4fab-bc81-f71556f20b4a",
+                    PowerOverlay = "efficiency",
+                    RefreshHz = 60,
+                },
                 Name = "Silent",
                 CpuFan = new FanCurveConfig
                 {
@@ -196,10 +307,30 @@ public sealed class AppConfig
                 Name = "Balanced",
                 CpuFan = FanCurveConfig.DefaultCpu(),
                 GpuFan = FanCurveConfig.DefaultGpu(),
+                Power = new ProfilePower
+                {
+                    PerfMode = "Balanced",
+                    CpuBoost = "Medium",
+                    GpuBoost = "Medium",
+                    WindowsPlan = "381b4222-f694-41f0-9685-ff5bb260df2e",
+                    PowerOverlay = "recommended",
+                    RefreshHz = 0, // leave the refresh rate wherever the user put it
+                },
             },
             new Profile
             {
-                Name = "Performance",
+                // Everything off the leash. The refresh rate is left alone rather than
+                // forced to maximum, because that is the user's call, not the profile's.
+                Power = new ProfilePower
+                {
+                    PerfMode = "Gaming",
+                    CpuBoost = "Boost",
+                    GpuBoost = "High",
+                    WindowsPlan = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+                    PowerOverlay = "performance",
+                    RefreshHz = 0,
+                },
+                Name = "Turbo",
                 CpuFan = new FanCurveConfig
                 {
                     Points =
