@@ -42,7 +42,7 @@ public sealed class KeyboardPreview : FrameworkElement
         var cellH = (height - pad * 2 - gap * (RazerChroma.Rows - 1)) / RazerChroma.Rows;
         if (cellW <= 0 || cellH <= 0) return;
 
-        dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(0x0A, 0x0B, 0x0D)), null,
+        dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(0x05, 0x05, 0x05)), null,
             new Rect(0, 0, width, height), 10, 10);
 
         for (var r = 0; r < RazerChroma.Rows; r++)
@@ -57,7 +57,7 @@ public sealed class KeyboardPreview : FrameworkElement
             // An unlit key still needs to read as a key, so it gets a faint body.
             var isDark = colour is { R: < 8, G: < 8, B: < 8 };
             var brush = isDark
-                ? new SolidColorBrush(Color.FromRgb(0x16, 0x18, 0x1C))
+                ? new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x18))
                 : new SolidColorBrush(Color.FromRgb(colour.R, colour.G, colour.B));
             brush.Freeze();
 

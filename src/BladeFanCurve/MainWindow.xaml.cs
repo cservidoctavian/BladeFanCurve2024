@@ -35,8 +35,8 @@ public partial class MainWindow : Window
         Interval = TimeSpan.FromMilliseconds(350)
     };
 
-    private static readonly Brush DotIdle = Frozen("#6E7784");
-    private static readonly Brush DotGood = Frozen("#5FD69C");
+    private static readonly Brush DotIdle = Frozen("#8F8F8F");
+    private static readonly Brush DotGood = Frozen("#44D62C"); // Razer green
     private static readonly Brush DotWarn = Frozen("#E7B44C");
     private static readonly Brush DotBad = Frozen("#F0645C");
 
@@ -195,19 +195,6 @@ public partial class MainWindow : Window
     {
         var rates = DisplayControl.AvailableRefreshRates();
 
-        var plans = new List<(string, string)> { ("", "Leave unchanged") };
-        try
-        {
-            plans.AddRange(WindowsPowerPlan.Enumerate().Select(p => (p.Id.ToString(), p.Name)));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Could not enumerate power plans: {ex.Message}");
-        }
-
-        _powerPlans = plans;
-        _refreshRates = rates;
-
         // Display card
         RefreshRateBox.Items.Clear();
         foreach (var hz in rates) RefreshRateBox.Items.Add(new ComboBoxItem { Content = $"{hz} Hz", Tag = hz });
@@ -244,7 +231,6 @@ public partial class MainWindow : Window
         Charge80.IsChecked = _config.Battery.ChargeLimitPercent is > 60 and <= 80;
         Charge100.IsChecked = _config.Battery.ChargeLimitPercent > 80;
 
-        LoadProfilePower();
         LoadAutomation();
         RefreshPowerSupportText();
 
@@ -255,79 +241,27 @@ public partial class MainWindow : Window
     }
 
 
-    /// <summary>Safe to call before the power tab has been built, e.g. during construction.</summary>
-    private void TryLoadProfilePower()
+    /// <summary>
+    /// One line beside the profile picker saying what the selected profile applies. Its
+    /// tooltip is what the last switch actually did, because the controller can refuse a
+    /// power level and that should be visible somewhere other than the log.
+    /// </summary>
+    private void UpdateProfileSummary()
     {
-        if (PerfModeBox == null) return;
-        try { LoadProfilePower(); } catch { /* the tab is not built yet */ }
+        var power = _config.GetActiveProfile().Power ?? new ProfilePower();
+        ProfileSummaryText.Text = power.Describe();
+
+        var report = _loop.LastPowerReport;
+        ProfileSummaryText.ToolTip = string.IsNullOrEmpty(report) ? null : report;
     }
 
-    private List<(string Tag, string Label)> _powerPlans = new();
-    private IReadOnlyList<int> _refreshRates = Array.Empty<int>();
-
-    private void LoadProfilePower()
-    {
-        var profile = _config.GetActiveProfile();
-        var power = profile.Power ??= new ProfilePower();
-
-        ProfilePowerTitle.Text = $"P R O F I L E  ·  {profile.Name.ToUpperInvariant()}";
-
-        FillCombo(PerfModeBox, new[]
-        {
-            ("", "Leave unchanged"),
-            ("Balanced", "Balanced  ·  35 W CPU"),
-            ("Gaming", "Gaming  ·  55 W CPU"),
-            ("Creator", "Creator"),
-            ("Custom", "Custom"),
-        }, power.PerfMode);
-
-        FillCombo(FallbackModeBox, new[]
-        {
-            ("", "Leave unchanged"),
-            ("Balanced", "Balanced  ·  35 W CPU"),
-            ("Gaming", "Gaming  ·  55 W CPU"),
-            ("Creator", "Creator"),
-        }, power.FallbackPerfMode);
-
-        FillCombo(CpuBoostBox, new[]
-        {
-            ("", "Leave unchanged"), ("Low", "Low"), ("Medium", "Medium"),
-            ("High", "High"), ("Boost", "Boost"),
-        }, power.CpuBoost);
-
-        FillCombo(GpuBoostBox, new[]
-        {
-            ("", "Leave unchanged"), ("Low", "Low"), ("Medium", "Medium"), ("High", "High"),
-        }, power.GpuBoost);
-
-        FillCombo(PowerPlanBox, _powerPlans, power.WindowsPlan);
-
-        FillCombo(PowerOverlayBox, new[]
-        {
-            ("", "Leave unchanged"),
-            ("efficiency", "Best power efficiency"),
-            ("recommended", "Recommended"),
-            ("performance", "Best performance"),
-        }, power.PowerOverlay);
-
-        var rateOptions = new List<(string, string)> { ("0", "Leave unchanged") };
-        rateOptions.AddRange(_refreshRates.Select(hz => (hz.ToString(), $"{hz} Hz")));
-        FillCombo(ProfileRefreshBox, rateOptions, power.RefreshHz.ToString());
-    }
+    /// <summary>The controller instance the battery card last described, so it is refreshed once it appears.</summary>
+    private RazerPower? _powerShown;
 
     private void RefreshPowerSupportText()
     {
         var power = _loop.Power;
-
-        BoostSupportText.Text = power switch
-        {
-            null => "Waiting for the controller.",
-            { SupportsBoost: true } => "CPU and GPU power levels are supported. The controller only "
-                                     + "honours them in Custom mode, so a profile that sets them must "
-                                     + "also select Custom above.",
-            _ => "This firmware does not expose CPU/GPU power levels. A profile asking for Custom "
-               + "will use its fallback mode instead, which still changes the power target.",
-        };
+        _powerShown = power;
 
         var supportsLimit = power is { SupportsChargeLimit: true };
         ChargeLimitToggle.IsEnabled = supportsLimit;
@@ -414,7 +348,7 @@ public partial class MainWindow : Window
             BindCurves();
             CpuCurveEditor.InvalidateVisual();
             GpuCurveEditor.InvalidateVisual();
-            TryLoadProfilePower();
+            LoadPowerTabDisplayOnly(); // the profile may have changed the refresh rate
             UpdateAutomationStatus();
 
             AutomationStatusText.Text = $"Switched to {name} — {reason}.";
@@ -454,37 +388,6 @@ public partial class MainWindow : Window
         OverrideSlider.Minimum = _config.Safety.MinRpm;
         CpuCurveEditor.InvalidateVisual();
         GpuCurveEditor.InvalidateVisual();
-    }
-
-    private void ProfilePower_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (!IsLoaded || _loading) return;
-
-        var power = _config.GetActiveProfile().Power ??= new ProfilePower();
-        power.PerfMode = SelectedTag(PerfModeBox);
-        power.FallbackPerfMode = SelectedTag(FallbackModeBox);
-        power.CpuBoost = SelectedTag(CpuBoostBox);
-        power.GpuBoost = SelectedTag(GpuBoostBox);
-        power.WindowsPlan = SelectedTag(PowerPlanBox);
-        power.PowerOverlay = SelectedTag(PowerOverlayBox);
-        power.RefreshHz = int.TryParse(SelectedTag(ProfileRefreshBox), out var hz) ? hz : 0;
-
-        Persist();
-    }
-
-    private void ApplyProfilePower_Click(object sender, RoutedEventArgs e)
-    {
-        ProfilePowerStatus.Text = "Applying…";
-        Task.Run(() =>
-        {
-            var report = _loop.ApplyProfilePower(_config);
-            Dispatcher.BeginInvoke(() =>
-            {
-                ProfilePowerStatus.Text = report;
-                RefreshPowerSupportText();
-                LoadPowerTabDisplayOnly();
-            });
-        });
     }
 
     /// <summary>Re-reads just the display state, since applying a profile may have changed it.</summary>
@@ -595,7 +498,7 @@ public partial class MainWindow : Window
 
     private static readonly string[] Swatches =
     {
-        "#00FF88", "#00E5FF", "#3355FF", "#B14CFF", "#FF3B7B", "#FF6A00", "#FFD400", "#FFFFFF",
+        "#44D62C", "#00FF88", "#00E5FF", "#3355FF", "#B14CFF", "#FF3B7B", "#FF6A00", "#FFD400", "#FFFFFF",
     };
 
     private void BuildEffectList()
@@ -630,12 +533,17 @@ public partial class MainWindow : Window
     private void AddEffectHeader(string text) =>
         EffectList.Items.Add(new ListBoxItem
         {
-            Content = text,
+            // A TextBlock with its own font and colour, because a plain string would be
+            // drawn with the app-wide body text style and look like another effect.
+            Content = new TextBlock
+            {
+                Text = text,
+                FontFamily = (FontFamily)FindResource("MonoFont"),
+                FontSize = 10,
+                Foreground = (Brush)FindResource("MutedDim"),
+            },
             IsEnabled = false,
             Focusable = false,
-            FontFamily = (FontFamily)FindResource("MonoFont"),
-            FontSize = 10,
-            Foreground = (Brush)FindResource("MutedDim"),
             Padding = new Thickness(14, 12, 14, 6),
         });
 
@@ -910,6 +818,10 @@ public partial class MainWindow : Window
             _ => "Fan control is off",
         };
 
+        // The battery card is built before the controller is found, so refresh it once
+        // the power features have actually been probed.
+        if (!ReferenceEquals(_loop.Power, _powerShown)) RefreshPowerSupportText();
+
         DeviceText.Text = status.DeviceConnected
             ? $"{status.DeviceName}  |  1532:{status.DeviceProductId:X4}  |  txn 0x{status.TransactionId:X2}"
             : status.Message ?? "No device";
@@ -996,15 +908,10 @@ public partial class MainWindow : Window
                 IsChecked = name == _config.ActiveProfile,
             };
 
-            item.Checked += (_, _) =>
-            {
-                if (_loading) return;
-                _config.ActiveProfile = name;
-                BindCurves();
-                CpuCurveEditor.InvalidateVisual();
-                GpuCurveEditor.InvalidateVisual();
-                PersistNow();
-            };
+            // Click rather than Checked: Click also fires for the profile that is already
+            // selected, which re-applies it, and it never fires for the programmatic
+            // IsChecked changes made while syncing from the tray or the charger.
+            item.Click += (_, _) => SelectProfile(name);
 
             ProfileSegments.Children.Add(item);
         }
@@ -1013,9 +920,39 @@ public partial class MainWindow : Window
         BindCurves();
     }
 
+    /// <summary>
+    /// Picking a profile applies all of it: the curves, and the power preset — CPU and
+    /// GPU levels, Windows plan and power mode, refresh rate. Picking the one that is
+    /// already active applies its preset again, e.g. after changing the refresh rate by
+    /// hand.
+    /// </summary>
+    private void SelectProfile(string name)
+    {
+        if (_loading) return;
+
+        if (_config.ActiveProfile != name)
+        {
+            _config.ActiveProfile = name;
+            BindCurves();
+            CpuCurveEditor.InvalidateVisual();
+            GpuCurveEditor.InvalidateVisual();
+
+            // Saving hands the config to the control loop, which sees the profile change
+            // and applies the power preset before returning.
+            PersistNow();
+        }
+        else
+        {
+            _loop.ApplyProfilePower(_config);
+        }
+
+        UpdateProfileSummary();
+        LoadPowerTabDisplayOnly();
+    }
+
     private void BindCurves()
     {
-        if (IsLoaded || !_loading) TryLoadProfilePower();
+        UpdateProfileSummary();
 
         var profile = _config.GetActiveProfile();
 
@@ -1370,6 +1307,7 @@ public partial class MainWindow : Window
         BindCurves();
         CpuCurveEditor.InvalidateVisual();
         GpuCurveEditor.InvalidateVisual();
+        LoadPowerTabDisplayOnly();
         _loading = false;
     }
 

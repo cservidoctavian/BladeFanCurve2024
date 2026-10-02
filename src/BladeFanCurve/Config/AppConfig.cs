@@ -65,12 +65,24 @@ public sealed class FanCurveConfig
 
 /// <summary>
 /// The power side of a profile. Every field defaults to "leave it alone" so that a
-/// config written by an older version does not suddenly start changing the Windows
-/// power plan or the refresh rate after an upgrade. Only the shipped default profiles
-/// carry opinionated values.
+/// bare profile never starts changing the Windows power plan or the refresh rate by
+/// itself. The three shipped profiles carry the fixed presets below, and selecting
+/// one of them on the Fan curves tab applies its preset in full.
 /// </summary>
 public sealed class ProfilePower
 {
+    /// <summary>
+    /// <see cref="RefreshHz"/> value meaning "the highest rate the panel offers at the
+    /// current resolution", so a preset does not have to hard-code 240 Hz.
+    /// </summary>
+    public const int HighestRefreshRate = -1;
+
+    // The three schemes every Windows install ships with. Kept as strings here rather
+    // than borrowed from WindowsPowerPlan so this file stays free of Windows imports.
+    private const string PowerSaverPlan = "a1841308-3541-4fab-bc81-f71556f20b4a";
+    private const string BalancedPlan = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    private const string HighPerformancePlan = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+
     /// <summary>Razer performance mode: Balanced, Gaming, Creator, Custom. Empty leaves it.</summary>
     public string PerfMode { get; set; } = "";
 
@@ -98,10 +110,103 @@ public sealed class ProfilePower
     /// <summary>Power-mode overlay: efficiency, recommended, performance. Empty leaves it.</summary>
     public string PowerOverlay { get; set; } = "";
 
-    /// <summary>Display refresh rate in Hz, or 0 to leave it. Dropping to 60 Hz is a real battery saving.</summary>
+    /// <summary>
+    /// Display refresh rate in Hz, 0 to leave it, or <see cref="HighestRefreshRate"/>
+    /// for the panel's maximum. Dropping to 60 Hz is a real battery saving.
+    /// </summary>
     public int RefreshHz { get; set; }
 
     public ProfilePower Clone() => (ProfilePower)MemberwiseClone();
+
+    // ------------------------------------------------------------- presets
+    //
+    // Razer exposes power as steps, not watts: Custom mode with a CPU level (Low,
+    // Medium, High, Boost) and a GPU level (Low, Medium, High). The watt figures that
+    // do exist belong to the named modes used as fallbacks — Balanced runs a 35 W CPU
+    // target, Gaming 55 W — for firmware that has no level commands.
+
+    /// <summary>Lowest power everywhere: both chips on Low, power saver, efficiency, 60 Hz.</summary>
+    public static ProfilePower SilentPreset() => new()
+    {
+        PerfMode = "Custom",
+        FallbackPerfMode = "Balanced",
+        CpuBoost = "Low",
+        GpuBoost = "Low",
+        WindowsPlan = PowerSaverPlan,
+        PowerOverlay = "efficiency",
+        RefreshHz = 60,
+    };
+
+    /// <summary>
+    /// The 35 W-class CPU target with the CPU level on High, and the GPU on High. The
+    /// panel goes back to its top refresh rate, since Silent is what dropped it.
+    /// </summary>
+    public static ProfilePower BalancedPreset() => new()
+    {
+        PerfMode = "Custom",
+        FallbackPerfMode = "Balanced",
+        CpuBoost = "High",
+        GpuBoost = "High",
+        WindowsPlan = BalancedPlan,
+        PowerOverlay = "recommended",
+        RefreshHz = HighestRefreshRate,
+    };
+
+    /// <summary>
+    /// Everything at maximum: CPU on full Boost (the 55 W ceiling), GPU on its top
+    /// level, the high-performance plan, best-performance mode and the panel's top
+    /// refresh rate.
+    /// </summary>
+    public static ProfilePower PerformancePreset() => new()
+    {
+        PerfMode = "Custom",
+        FallbackPerfMode = "Gaming",
+        CpuBoost = "Boost",
+        GpuBoost = "High",
+        WindowsPlan = HighPerformancePlan,
+        PowerOverlay = "performance",
+        RefreshHz = HighestRefreshRate,
+    };
+
+    /// <summary>The fixed preset for a shipped profile name, or null for any other profile.</summary>
+    public static ProfilePower? PresetFor(string? profileName) => profileName switch
+    {
+        "Silent" => SilentPreset(),
+        "Balanced" => BalancedPreset(),
+        "Performance" => PerformancePreset(),
+        _ => null,
+    };
+
+    /// <summary>One line for the profile picker, e.g. "CPU high · GPU high · balanced plan · top Hz".</summary>
+    public string Describe()
+    {
+        var parts = new List<string>();
+
+        // A hand-edited config can carry nulls, so nothing here assumes a string.
+        var mode = PerfMode ?? "";
+        var cpu = CpuBoost ?? "";
+        var gpu = GpuBoost ?? "";
+
+        var custom = mode.Equals("Custom", StringComparison.OrdinalIgnoreCase);
+        if (custom && cpu.Length > 0) parts.Add($"CPU {cpu.ToLowerInvariant()}");
+        if (custom && gpu.Length > 0) parts.Add($"GPU {gpu.ToLowerInvariant()}");
+        if (!custom && mode.Length > 0) parts.Add($"{mode} mode");
+
+        var plan = (WindowsPlan ?? "").Trim().ToLowerInvariant() switch
+        {
+            "" => null,
+            PowerSaverPlan => "power saver",
+            BalancedPlan => "balanced plan",
+            HighPerformancePlan => "high performance",
+            _ => "custom plan",
+        };
+        if (plan != null) parts.Add(plan);
+
+        if (RefreshHz == HighestRefreshRate) parts.Add("top Hz");
+        else if (RefreshHz > 0) parts.Add($"{RefreshHz} Hz");
+
+        return parts.Count == 0 ? "fan curves only" : string.Join("  ·  ", parts);
+    }
 }
 
 public sealed class Profile
@@ -294,7 +399,11 @@ public sealed class LightingSettings
 
 public sealed class AppConfig
 {
-    public int Version { get; set; } = 3;
+    /// <summary>
+    /// 4: the shipped profiles carry fixed power presets (see <see cref="ProfilePower"/>).
+    /// 3: profiles carry power settings at all.
+    /// </summary>
+    public int Version { get; set; } = 4;
     public bool Enabled { get; set; } = true;
     public bool StartMinimized { get; set; } = true;
     public string ActiveProfile { get; set; } = "Balanced";
@@ -325,20 +434,10 @@ public sealed class AppConfig
         {
             new Profile
             {
-                // Quiet and cool: the low TDP mode, the power-saver plan, and 60 Hz,
-                // which on a 240 Hz panel is a larger battery saving than anything else here.
-                Power = new ProfilePower
-                {
-                    // Custom is the only mode in which the controller honours boost
-                    // levels, so it is what "lowest power" actually requires.
-                    PerfMode = "Custom",
-                    FallbackPerfMode = "Balanced",
-                    CpuBoost = "Low",
-                    GpuBoost = "Low",
-                    WindowsPlan = "a1841308-3541-4fab-bc81-f71556f20b4a",
-                    PowerOverlay = "efficiency",
-                    RefreshHz = 60,
-                },
+                // Quiet and cool: lowest CPU and GPU power, the power-saver plan, and
+                // 60 Hz, which on a 240 Hz panel is a larger battery saving than anything
+                // else here.
+                Power = ProfilePower.SilentPreset(),
                 Name = "Silent",
                 CpuFan = new FanCurveConfig
                 {
@@ -362,31 +461,13 @@ public sealed class AppConfig
                 Name = "Balanced",
                 CpuFan = FanCurveConfig.DefaultCpu(),
                 GpuFan = FanCurveConfig.DefaultGpu(),
-                Power = new ProfilePower
-                {
-                    PerfMode = "Custom",
-                    FallbackPerfMode = "Balanced",
-                    CpuBoost = "Medium",
-                    GpuBoost = "Medium",
-                    WindowsPlan = "381b4222-f694-41f0-9685-ff5bb260df2e",
-                    PowerOverlay = "recommended",
-                    RefreshHz = 0, // leave the refresh rate wherever the user put it
-                },
+                Power = ProfilePower.BalancedPreset(),
             },
             new Profile
             {
-                // Everything off the leash. The refresh rate is left alone rather than
-                // forced to maximum, because that is the user's call, not the profile's.
-                Power = new ProfilePower
-                {
-                    PerfMode = "Custom",
-                    FallbackPerfMode = "Gaming",
-                    CpuBoost = "Boost",
-                    GpuBoost = "High",
-                    WindowsPlan = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
-                    PowerOverlay = "performance",
-                    RefreshHz = 0,
-                },
+                // Everything off the leash: full CPU boost, top GPU level, the
+                // high-performance plan and the panel's top refresh rate.
+                Power = ProfilePower.PerformancePreset(),
                 Name = "Performance",
                 CpuFan = new FanCurveConfig
                 {

@@ -17,17 +17,18 @@ namespace BladeFanCurve.UI;
 /// </summary>
 public sealed class PowerChart : FrameworkElement
 {
-    // Series colours: the app's CPU green and GPU violet, stepped down into the
-    // lightness band that keeps them legible as large filled areas on the dark card.
-    // Checked for colour-vision separation rather than eyeballed — deutan ΔE 23.5,
-    // normal-vision ΔE 26.5, both well clear of the floors.
-    private static readonly Color CpuColor = Color.FromRgb(0x3A, 0xAD, 0x77);
-    private static readonly Color GpuColor = Color.FromRgb(0x60, 0x70, 0xDE);
+    // Series colours: Razer green for the CPU and electric blue for the GPU, the same
+    // pair the rest of the window uses (ChartCpu / ChartGpu in App.xaml). Checked for
+    // colour-vision separation rather than eyeballed — CIEDE2000 ΔE 62 under simulated
+    // deuteranopia (Machado 2009) and 63 for normal vision, and 9.8:1 and 5.9:1 against
+    // the card.
+    private static readonly Color CpuColor = Color.FromRgb(0x44, 0xD6, 0x2C);
+    private static readonly Color GpuColor = Color.FromRgb(0x4F, 0x8D, 0xFF);
 
-    private static readonly Brush GridBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x1E, 0x23, 0x2B)));
-    private static readonly Brush AxisTextBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x84)));
-    private static readonly Brush DimTextBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x4C, 0x55, 0x5F)));
-    private static readonly Brush CrosshairBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x3B, 0x44, 0x4F)));
+    private static readonly Brush GridBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x20)));
+    private static readonly Brush AxisTextBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x8F, 0x8F, 0x8F)));
+    private static readonly Brush DimTextBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x5E, 0x5E, 0x5E)));
+    private static readonly Brush CrosshairBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40)));
 
     private readonly Pen _cpuPen;
     private readonly Pen _gpuPen;
@@ -61,7 +62,7 @@ public sealed class PowerChart : FrameworkElement
 
         _cpuMarker = Freeze(new SolidColorBrush(CpuColor));
         _gpuMarker = Freeze(new SolidColorBrush(GpuColor));
-        _markerRing = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x10, 0x13, 0x17)), 2));
+        _markerRing = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x11, 0x11, 0x11)), 2));
 
         ClipToBounds = true;
     }

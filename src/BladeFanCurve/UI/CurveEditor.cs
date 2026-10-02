@@ -105,7 +105,7 @@ public sealed class CurveEditor : FrameworkElement
 
     public static readonly DependencyProperty AccentProperty = DependencyProperty.Register(
         nameof(Accent), typeof(Color), typeof(CurveEditor),
-        new FrameworkPropertyMetadata(Color.FromRgb(0x5F, 0xD6, 0x9C),
+        new FrameworkPropertyMetadata(Color.FromRgb(0x44, 0xD6, 0x2C), // Razer green
             FrameworkPropertyMetadataOptions.AffectsRender));
 
     public Color Accent
@@ -348,7 +348,7 @@ public sealed class CurveEditor : FrameworkElement
         }
 
         // handles: hollow rings, filled with the card colour
-        var handleFill = new SolidColorBrush(Color.FromRgb(0x10, 0x13, 0x17));
+        var handleFill = new SolidColorBrush(Color.FromRgb(0x11, 0x11, 0x11));
         handleFill.Freeze();
         var handlePen = new Pen(accentBrush, 2.2);
         handlePen.Freeze();
@@ -369,14 +369,14 @@ public sealed class CurveEditor : FrameworkElement
         {
             var y = ToScreen(MinTemp, rpm).Y;
             if (y <= area.Top + 6 || y >= area.Bottom - 6) continue;
-            DrawText(dc, $"{rpm}", new Point(area.Left + 4, y - 14), 10, "#5A636E", dpi);
+            DrawText(dc, $"{rpm}", new Point(area.Left + 4, y - 14), 10, "#6A6A6A", dpi);
         }
 
         for (var t = RoundUpTo((int)MinTemp, 15); t <= MaxTemp; t += 15)
         {
             var x = ToScreen(t, MinRpm).X;
             if (x <= area.Left + 6 || x >= area.Right - 20) continue;
-            DrawText(dc, $"{t}°", new Point(x + 4, area.Bottom - 15), 10, "#5A636E", dpi);
+            DrawText(dc, $"{t}°", new Point(x + 4, area.Bottom - 15), 10, "#6A6A6A", dpi);
         }
 
         var hoverIndex = HitTest(_mouse);
@@ -386,7 +386,7 @@ public sealed class CurveEditor : FrameworkElement
             var s = ToScreen(p.TempC, p.Rpm);
             DrawText(dc, $"{p.TempC:0}°C → {p.Rpm} rpm",
                 new Point(Math.Min(s.X + 14, area.Right - 120), Math.Max(area.Top, s.Y - 24)),
-                11, "#E6EAF0", dpi);
+                11, "#F5F5F5", dpi);
         }
     }
 

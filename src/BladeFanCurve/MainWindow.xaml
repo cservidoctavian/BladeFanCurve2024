@@ -196,9 +196,15 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- profile row -->
+                    <!-- profile row: picking a profile applies its curves and its power preset together -->
                     <Grid Grid.Row="0" Margin="0,0,0,18">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="P R O F I L E" Style="{StaticResource MonoLabel}"
                                        VerticalAlignment="Center" Margin="0,0,18,0"/>
                             <Border Background="{StaticResource Card}" BorderBrush="{StaticResource CardBorder}"
@@ -207,7 +213,11 @@
                             </Border>
                         </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock x:Name="ProfileSummaryText" Grid.Column="1" Style="{StaticResource Mono}"
+                                   VerticalAlignment="Center" Margin="18,0,18,0" Text=""
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button Content="Duplicate" Style="{StaticResource OutlineButton}"
                                     Click="DuplicateProfile_Click"/>
                             <Button Content="Delete" Style="{StaticResource OutlineButton}" Margin="8,0,0,0"
@@ -244,7 +254,7 @@
                                                HorizontalAlignment="Right" VerticalAlignment="Center" Text=""/>
                                 </Grid>
 
-                                <ui:CurveEditor x:Name="CpuCurveEditor" Grid.Row="1" Accent="#5FD69C"
+                                <ui:CurveEditor x:Name="CpuCurveEditor" Grid.Row="1" Accent="{StaticResource AccentColor}"
                                                 CurveChanged="CurveEditor_CurveChanged"/>
 
                                 <Grid Grid.Row="2" Margin="0,12,0,0">
@@ -277,7 +287,7 @@
                                                HorizontalAlignment="Right" VerticalAlignment="Center" Text=""/>
                                 </Grid>
 
-                                <ui:CurveEditor x:Name="GpuCurveEditor" Grid.Row="1" Accent="#7D8CF5"
+                                <ui:CurveEditor x:Name="GpuCurveEditor" Grid.Row="1" Accent="{StaticResource AccentGpuColor}"
                                                 CurveChanged="CurveEditor_CurveChanged"/>
 
                                 <Grid Grid.Row="2" Margin="0,12,0,0">
@@ -691,13 +701,13 @@
 
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                             VerticalAlignment="Center">
-                                    <Ellipse Width="9" Height="9" Fill="#3AAD77" VerticalAlignment="Center"/>
+                                    <Ellipse Width="9" Height="9" Fill="{StaticResource ChartCpu}" VerticalAlignment="Center"/>
                                     <TextBlock Text="CPU" Style="{StaticResource Mono}" Margin="8,0,0,0"
                                                VerticalAlignment="Center"/>
                                     <TextBlock x:Name="CpuWattNow" Text="—" FontSize="19" Margin="10,0,0,0"
                                                VerticalAlignment="Center"/>
 
-                                    <Ellipse Width="9" Height="9" Fill="#6070DE" Margin="28,0,0,0"
+                                    <Ellipse Width="9" Height="9" Fill="{StaticResource ChartGpu}" Margin="28,0,0,0"
                                              VerticalAlignment="Center"/>
                                     <TextBlock Text="GPU" Style="{StaticResource Mono}" Margin="8,0,0,0"
                                                VerticalAlignment="Center"/>
@@ -761,98 +771,11 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <!-- profile power -->
+                        <!-- battery and automation. Profile power is not edited here: picking a
+                             profile on the Fan curves tab applies its fixed preset. -->
                         <StackPanel Grid.Column="0">
-                            <Border Style="{StaticResource CardBox}" Padding="24,22" VerticalAlignment="Top">
-                                <StackPanel>
-                                    <TextBlock x:Name="ProfilePowerTitle" Text="P R O F I L E"
-                                               Style="{StaticResource MonoLabel}" Margin="0,0,0,6"/>
-                                    <TextBlock Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,0,0,16"
-                                               Text="These apply whenever this profile is selected. Leave any of them blank to have the profile not touch that setting."/>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Performance mode" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="PerfModeBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="CPU boost" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="CpuBoostBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="GPU boost" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="GpuBoostBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="If Custom fails" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="FallbackModeBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <TextBlock x:Name="BoostSupportText" Style="{StaticResource Mono}"
-                                               TextWrapping="Wrap" Margin="0,2,0,14" Text=""/>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Windows power plan" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="PowerPlanBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Power mode" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="PowerOverlayBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Refresh rate" VerticalAlignment="Center"/>
-                                        <ComboBox x:Name="ProfileRefreshBox" Grid.Column="1"
-                                                  SelectionChanged="ProfilePower_Changed"/>
-                                    </Grid>
-
-                                    <Button Content="Apply this profile now" Margin="0,18,0,0"
-                                            HorizontalAlignment="Left"
-                                            Style="{StaticResource OutlineButton}" Click="ApplyProfilePower_Click"/>
-                                    <TextBlock x:Name="ProfilePowerStatus" Style="{StaticResource Mono}"
-                                               TextWrapping="Wrap" Margin="0,12,0,0" Text=""/>
-                                </StackPanel>
-                            </Border>
-
                             <!-- battery -->
-                            <Border Style="{StaticResource CardBox}" Padding="24,22" Margin="0,16,0,0">
+                            <Border Style="{StaticResource CardBox}" Padding="24,22">
                                 <StackPanel>
                                     <TextBlock Text="B A T T E R Y   C A R E" Style="{StaticResource MonoLabel}"
                                                Margin="0,0,0,6"/>
@@ -1041,7 +964,13 @@
                         <ListBox x:Name="LogList" Background="Transparent" BorderThickness="0"
                                  Foreground="{StaticResource Muted}"
                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource Mono}" FontSize="11"/>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </Border>
                 </Grid>
             </TabItem>

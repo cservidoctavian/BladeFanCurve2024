@@ -712,16 +712,31 @@ public sealed class ControlLoop : IDisposable
         }
 
         // ---- refresh rate ------------------------------------------------
-        if (power.RefreshHz > 0)
+        var refreshHz = power.RefreshHz;
+        if (refreshHz == ProfilePower.HighestRefreshRate)
         {
-            DisplayControl.SetRefreshRate(power.RefreshHz, out var message);
+            // "Top Hz" is resolved here rather than stored, so the same preset suits a
+            // 165 Hz panel as well as a 240 Hz one.
+            var rates = DisplayControl.AvailableRefreshRates();
+            refreshHz = rates.Count > 0 ? rates.Max() : 0;
+            if (refreshHz == 0) sb.AppendLine("display: could not list the panel's refresh rates");
+        }
+
+        if (refreshHz > 0)
+        {
+            DisplayControl.SetRefreshRate(refreshHz, out var message);
             sb.AppendLine($"display: {message}");
         }
 
         var report = sb.ToString().TrimEnd();
         if (report.Length > 0) Log.Info($"Profile '{profile.Name}' applied — {report.Replace("\r\n", "; ").Replace("\n", "; ")}");
-        return report.Length > 0 ? report : "This profile does not change any power settings.";
+
+        LastPowerReport = report.Length > 0 ? report : "This profile does not change any power settings.";
+        return LastPowerReport;
     }
+
+    /// <summary>What the most recent profile switch actually did, for the profile picker's tooltip.</summary>
+    public string LastPowerReport { get; private set; } = "";
 
     /// <summary>
     /// Pushes the configured charge limit to the EC. The controller forgets it across

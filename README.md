@@ -140,7 +140,9 @@ held. Between points the value is linear. The dashed vertical line is the curren
 temperature and the white dot is where you actually are on the curve.
 
 Three profiles ship by default — **Silent**, **Balanced**, **Performance** — and
-you can add your own. Profiles are switchable from the tray menu.
+you can add your own. Each shipped profile also carries a fixed power preset, applied
+the moment you select it (see [Power profiles](#power-profiles)). Profiles are
+switchable from the tray menu too.
 
 ---
 
@@ -248,7 +250,9 @@ floor is a genuinely lower-margin setting than 2000. That is the trade for silen
 
 Pull the charger out and the app switches to the **Silent** profile — which drops the
 CPU and GPU power levels, moves Windows to the power-saver plan, and takes the panel
-to 60 Hz. Plug back in and it returns to whatever was active before.
+to 60 Hz. Plug back in and it returns to whatever was active before — and since
+Balanced and Performance restore the panel's top refresh rate, the screen comes back
+from 60 Hz with it.
 
 Both halves can be turned off separately, and the battery profile is a dropdown, so
 "Silent" is a default rather than a rule.
@@ -289,9 +293,10 @@ drawn as a break in the line. Joining across it would invent power draw that was
 never measured, and a discrete GPU that has powered itself down would appear to be
 sitting at 0 W rather than simply not reporting.
 
-The series colours were checked rather than chosen by eye: CPU `#3AAD77` and GPU
-`#6070DE` separate by ΔE 23.5 under deuteranopia and 26.5 for normal vision, both
-well clear of the floors, and each clears 3:1 contrast against the card.
+The series colours were checked rather than chosen by eye: CPU in Razer green
+`#44D62C` and GPU in electric blue `#4F8DFF` separate by CIEDE2000 ΔE 62 under
+simulated deuteranopia (Machado 2009) and 63 for normal vision, and they clear 9.8:1
+and 5.9:1 contrast against the card.
 
 ### Whether it will work on your machine
 
@@ -323,22 +328,30 @@ reports nothing at idle because it has powered down; it appears under load.
 
 ## Power profiles
 
-A profile is not just a pair of fan curves. Each one can also set the Razer
-performance mode, CPU/GPU boost, the Windows power plan and power-mode slider, and
-the display refresh rate — and switching profiles applies all of it at once.
+A profile is not just a pair of fan curves. Each of the three shipped profiles also
+carries a fixed power preset — the Razer performance mode and CPU/GPU power levels,
+the Windows power plan and power-mode slider, and the display refresh rate — and
+selecting the profile on the **Fan curves** tab applies all of it at once. The curves
+and the power settings are one switch, not two.
 
 | | Silent | Balanced | Performance |
 |---|---|---|---|
-| CPU power | Low | Medium | Boost |
-| GPU power | Low | Medium | High |
+| CPU power level | Low (lowest) | High | Boost (maximum) |
+| GPU power level | Low (lowest) | High | High (maximum) |
 | Performance mode | Custom | Custom | Custom |
 | If Custom unavailable | Balanced (35 W) | Balanced (35 W) | Gaming (55 W) |
 | Windows plan | Power saver | Balanced | High performance |
 | Power mode | Best efficiency | Recommended | Best performance |
-| Refresh rate | 60 Hz | leave | leave |
+| Refresh rate | 60 Hz | panel maximum | panel maximum |
 
-Selecting a profile on the **Fan curves** tab applies all of this at once — the
-curves and the power settings are one switch, not two.
+The line beside the profile picker says what the selected profile applies; hover it to
+see what the last switch actually did, including anything the controller refused.
+Clicking the profile that is already selected applies its preset again — useful after
+changing the refresh rate or the Windows plan by hand.
+
+There is no per-profile power editor. When upgrading from a version that had one, the
+three shipped profiles move onto these presets once; a profile you created yourself
+(with **Duplicate**) keeps whatever power settings it was copied with.
 
 **Why every profile selects Custom.** The controller only honours CPU and GPU power
 levels while it is in Custom mode. Setting a power level alongside Balanced or Gaming
@@ -347,17 +360,17 @@ and Balanced identical in power. If the firmware turns out not to expose the pow
 level commands, the profile drops to its named fallback mode instead, which still
 moves the power target even though it cannot separate CPU from GPU.
 
-Every field can be set to **Leave unchanged**, and that is the default for any
-profile you create or that was written by an older version — upgrading never starts
-silently moving your power plan.
+**About "wattage".** Razer does not expose a watts figure for the levels themselves —
+it exposes steps (CPU: Low, Medium, High, Boost; GPU: Low, Medium, High). The watt
+figures that exist belong to the named modes: Balanced runs a 35 W CPU limit and
+Gaming runs 55 W, which is why those are the fallbacks for Balanced and Performance.
+Real PL1/PL2 control needs a ring-0 driver, the same thing Memory Integrity blocks
+for CPU temperature, so it is not offered here.
 
-**About "wattage".** Razer does not expose a watts figure. What it exposes is the
-performance mode, and that *is* the power target: Balanced runs a 35 W CPU limit and
-Gaming runs 55 W. Real PL1/PL2 control needs a ring-0 driver, the same thing Memory
-Integrity blocks for CPU temperature, so it is not offered here.
-
-Dropping to 60 Hz in the Silent profile is worth more battery than any of the rest
-of this on a 240 Hz panel.
+**Refresh rate.** Dropping to 60 Hz in the Silent profile is worth more battery than
+any of the rest of this on a 240 Hz panel. Balanced and Performance put the panel
+back on its highest rate at the current resolution, so leaving Silent — by hand or by
+plugging the charger back in — never strands the screen at 60 Hz.
 
 ---
 

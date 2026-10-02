@@ -97,6 +97,13 @@ internal static class Program
         OldConfigsAdoptTheShippedPowerSettings();
         CustomisedProfilesAreNotOverwrittenByMigration();
 
+        Section("Fixed power presets");
+        ShippedProfilesUseTheFixedPresets();
+        PresetsAreOnlyForTheShippedNames();
+        UpgradeMovesShippedProfilesOntoThePresets();
+        TheTopRefreshRateSurvivesSanitising();
+        PresetsDescribeThemselves();
+
         Section("Fans off and the thermal guard");
         ZeroFloorIsAllowedThroughTheWholeChain();
         StoppedFanStillRampsInsteadOfJumping();
@@ -123,6 +130,8 @@ internal static class Program
         Section("XAML styles");
         EveryStyleReferenceMatchesItsTargetType();
         EveryStyleReferenceResolves();
+        PopupSurfacesAreDarkSoLightTextStaysReadable();
+        PowerTabHasNoPerProfileEditor();
 
         Section("Build configuration");
         WpfIncompatibleSettingsAreNotEnabled();
@@ -812,7 +821,10 @@ internal static class Program
         Check("silent biases toward efficiency", silent.Power.PowerOverlay == "efficiency");
         Check("performance biases toward performance", turbo.Power.PowerOverlay == "performance");
         Check("silent drops the refresh rate", silent.Power.RefreshHz == 60);
-        Check("performance leaves the refresh rate to the user", turbo.Power.RefreshHz == 0);
+        Check("performance takes the panel's top refresh rate",
+            turbo.Power.RefreshHz == ProfilePower.HighestRefreshRate);
+        Check("balanced puts the refresh rate back after silent",
+            cfg.Profiles.First(p => p.Name == "Balanced").Power.RefreshHz == ProfilePower.HighestRefreshRate);
 
         foreach (var p in cfg.Profiles)
         {
@@ -926,13 +938,14 @@ internal static class Program
         Check("ships Silent, Balanced and Performance", cfg.Profiles.Count == 3);
 
         // Ordered lowest to highest, and every step must actually differ.
-        var order = new[] { "Low", "Medium", "Boost" };
+        var order = new[] { "Low", "Medium", "High", "Boost" };
         Check("silent asks for the lowest cpu power", silent.CpuBoost == "Low");
-        Check("balanced asks for moderate cpu power", balanced.CpuBoost == "Medium");
+        Check("balanced puts the cpu on high", balanced.CpuBoost == "High");
         Check("performance asks for maximum cpu power", performance.CpuBoost == "Boost");
 
+        // High is the GPU's top step, so Balanced and Performance share it.
         Check("silent asks for the lowest gpu power", silent.GpuBoost == "Low");
-        Check("balanced asks for moderate gpu power", balanced.GpuBoost == "Medium");
+        Check("balanced puts the gpu on high", balanced.GpuBoost == "High");
         Check("performance asks for maximum gpu power", performance.GpuBoost == "High");
 
         Check("cpu levels are strictly increasing",
@@ -1024,7 +1037,8 @@ internal static class Program
         Check("a profile the user has touched is left alone",
             tweaked.Profiles.First(p => p.Name == "Silent").Power.PerfMode == "Gaming");
         Check("an untouched profile beside it still gets defaults",
-            tweaked.Profiles.First(p => p.Name == "Balanced").Power.CpuBoost == "Medium");
+            tweaked.Profiles.First(p => p.Name == "Balanced").Power.CpuBoost
+                == ProfilePower.BalancedPreset().CpuBoost);
 
         // A profile with a name we do not ship must never be given someone else's settings.
         var custom = new AppConfig
@@ -1035,6 +1049,156 @@ internal static class Program
         ConfigStore.MigrateProfilePower(custom);
         Check("an unrecognised profile name is left untouched",
             custom.Profiles[0].Power.PerfMode == "");
+    }
+
+    // ------------------------------------------------------- fixed power presets
+
+    private static bool SameAs(ProfilePower a, ProfilePower b) =>
+        a.PerfMode == b.PerfMode && a.FallbackPerfMode == b.FallbackPerfMode
+        && a.CpuBoost == b.CpuBoost && a.GpuBoost == b.GpuBoost
+        && a.WindowsPlan == b.WindowsPlan && a.PowerOverlay == b.PowerOverlay
+        && a.RefreshHz == b.RefreshHz;
+
+    /// <summary>
+    /// Silent is lowest everything, Balanced is CPU and GPU on High with the 35 W mode
+    /// as its fallback, Performance is everything at maximum with the 55 W mode as its
+    /// fallback. Selecting a profile applies exactly this.
+    /// </summary>
+    private static void ShippedProfilesUseTheFixedPresets()
+    {
+        var cfg = AppConfig.CreateDefault();
+        Check("a new config starts at the preset version", cfg.Version == 4);
+
+        foreach (var name in new[] { "Silent", "Balanced", "Performance" })
+            Check($"{name} ships with its preset",
+                SameAs(cfg.Profiles.First(p => p.Name == name).Power, ProfilePower.PresetFor(name)!));
+
+        var silent = ProfilePower.SilentPreset();
+        Check("silent: cpu low", silent.CpuBoost == "Low");
+        Check("silent: gpu low", silent.GpuBoost == "Low");
+        Check("silent: power saver plan", silent.WindowsPlan == "a1841308-3541-4fab-bc81-f71556f20b4a");
+        Check("silent: best efficiency", silent.PowerOverlay == "efficiency");
+
+        var balanced = ProfilePower.BalancedPreset();
+        Check("balanced: custom mode so the levels count", balanced.PerfMode == "Custom");
+        Check("balanced: cpu high", balanced.CpuBoost == "High");
+        Check("balanced: gpu high", balanced.GpuBoost == "High");
+        Check("balanced: falls back to the 35 W mode", balanced.FallbackPerfMode == "Balanced");
+
+        var performance = ProfilePower.PerformancePreset();
+        Check("performance: cpu on full boost", performance.CpuBoost == "Boost");
+        Check("performance: gpu on its top level", performance.GpuBoost == "High");
+        Check("performance: falls back to the 55 W mode", performance.FallbackPerfMode == "Gaming");
+        Check("performance: high performance plan",
+            performance.WindowsPlan == "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+        Check("performance: best performance mode", performance.PowerOverlay == "performance");
+        Check("performance: top refresh rate", performance.RefreshHz == ProfilePower.HighestRefreshRate);
+    }
+
+    private static void PresetsAreOnlyForTheShippedNames()
+    {
+        Check("no preset for a user profile", ProfilePower.PresetFor("My Profile") is null);
+        Check("no preset for a missing name", ProfilePower.PresetFor(null) is null);
+        Check("names are matched exactly", ProfilePower.PresetFor("silent") is null);
+
+        // Each call hands out a fresh object, so editing one profile cannot edit another.
+        var first = ProfilePower.PresetFor("Balanced")!;
+        first.CpuBoost = "Low";
+        Check("presets are not shared instances", ProfilePower.PresetFor("Balanced")!.CpuBoost == "High");
+    }
+
+    /// <summary>
+    /// The upgrade that ships with the presets: profiles under the shipped names take
+    /// their preset even if they had been edited, because the editor is gone; anything
+    /// else is left exactly as it was; and it happens once.
+    /// </summary>
+    private static void UpgradeMovesShippedProfilesOntoThePresets()
+    {
+        var mine = new ProfilePower { PerfMode = "Gaming", RefreshHz = 120 };
+        var v3 = new AppConfig
+        {
+            Version = 3,
+            ActiveProfile = "Balanced",
+            Profiles =
+            {
+                new Profile { Name = "Silent", Power = new ProfilePower { PerfMode = "Gaming" } },
+                new Profile
+                {
+                    Name = "Balanced",
+                    Power = new ProfilePower { PerfMode = "Custom", CpuBoost = "Medium", GpuBoost = "Medium" },
+                },
+                new Profile { Name = "Performance", Power = new ProfilePower() },
+                new Profile { Name = "My Profile", Power = mine },
+            }
+        };
+
+        ConfigStore.MigrateToPowerPresets(v3);
+
+        foreach (var name in new[] { "Silent", "Balanced", "Performance" })
+            Check($"upgrade puts {name} on its preset",
+                SameAs(v3.Profiles.First(p => p.Name == name).Power, ProfilePower.PresetFor(name)!));
+
+        var custom = v3.Profiles.First(p => p.Name == "My Profile").Power;
+        Check("upgrade leaves a user profile alone", custom.PerfMode == "Gaming" && custom.RefreshHz == 120);
+        Check("upgrade stamps version 4", v3.Version == 4);
+
+        // A later hand edit must survive the next start.
+        v3.Profiles.First(p => p.Name == "Balanced").Power.CpuBoost = "Medium";
+        ConfigStore.MigrateToPowerPresets(v3);
+        Check("upgrade does not run twice",
+            v3.Profiles.First(p => p.Name == "Balanced").Power.CpuBoost == "Medium");
+
+        // A very old config goes through both steps and lands in the same place.
+        var v2 = new AppConfig
+        {
+            Version = 2,
+            Profiles =
+            {
+                new Profile { Name = "Turbo", Power = new ProfilePower() },
+                new Profile { Name = "Balanced", Power = new ProfilePower { CpuBoost = "Low" } },
+            }
+        };
+        ConfigStore.MigrateProfilePower(v2);
+        ConfigStore.MigrateToPowerPresets(v2);
+        Check("a version 2 Turbo ends up as the Performance preset",
+            SameAs(v2.Profiles.First(p => p.Name == "Performance").Power, ProfilePower.PerformancePreset()));
+        Check("a version 2 Balanced ends up on its preset",
+            SameAs(v2.Profiles.First(p => p.Name == "Balanced").Power, ProfilePower.BalancedPreset()));
+        Check("a version 2 config ends at version 4", v2.Version == 4);
+    }
+
+    private static void TheTopRefreshRateSurvivesSanitising()
+    {
+        Check("'top Hz' is kept", ConfigStore.SanitiseRefreshHz(ProfilePower.HighestRefreshRate)
+                                    == ProfilePower.HighestRefreshRate);
+        Check("'leave it' is kept", ConfigStore.SanitiseRefreshHz(0) == 0);
+        Check("60 Hz is kept", ConfigStore.SanitiseRefreshHz(60) == 60);
+        Check("240 Hz is kept", ConfigStore.SanitiseRefreshHz(240) == 240);
+        Check("an implausibly low rate is dropped", ConfigStore.SanitiseRefreshHz(10) == 0);
+        Check("an implausibly high rate is dropped", ConfigStore.SanitiseRefreshHz(9999) == 0);
+        Check("other negative values are dropped", ConfigStore.SanitiseRefreshHz(-5) == 0);
+    }
+
+    private static void PresetsDescribeThemselves()
+    {
+        var silent = ProfilePower.SilentPreset().Describe();
+        Check("silent summary names the levels", silent.Contains("CPU low") && silent.Contains("GPU low"));
+        Check("silent summary names the plan and rate", silent.Contains("power saver") && silent.Contains("60 Hz"));
+
+        var balanced = ProfilePower.BalancedPreset().Describe();
+        Check("balanced summary names the levels", balanced.Contains("CPU high") && balanced.Contains("GPU high"));
+        Check("balanced summary mentions the top rate", balanced.Contains("top Hz"));
+
+        var performance = ProfilePower.PerformancePreset().Describe();
+        Check("performance summary names full boost", performance.Contains("CPU boost"));
+        Check("performance summary names the plan", performance.Contains("high performance"));
+
+        Check("an empty power block says so", new ProfilePower().Describe() == "fan curves only");
+        Check("a named mode is described as a mode",
+            new ProfilePower { PerfMode = "Gaming" }.Describe() == "Gaming mode");
+        Check("nulls from a hand-edited config do not throw",
+            new ProfilePower { PerfMode = null!, CpuBoost = null!, GpuBoost = null!, WindowsPlan = null! }
+                .Describe() == "fan curves only");
     }
 
     // --------------------------------------------- fans off and the thermal guard
@@ -1471,6 +1635,53 @@ internal static class Program
         foreach (var problem in missing) Check($"UNDEFINED {problem}", false);
         Check("every referenced style is defined", missing.Count == 0);
         Check("keyed styles carry a target type", targets.Count > 0);
+    }
+
+    /// <summary>
+    /// The app's text is light everywhere — the implicit TextBlock style also reaches the
+    /// text controls generate inside their own templates — so anything that draws its own
+    /// surface has to draw it dark. The stock combo box drew both its box and its list
+    /// light, which put white text on white. Every such control gets an app-level style
+    /// that replaces the stock template.
+    /// </summary>
+    private static void PopupSurfacesAreDarkSoLightTextStaysReadable()
+    {
+        var (app, _) = LoadXaml();
+        if (app == null) { Check("App.xaml was found", false); return; }
+
+        foreach (var type in new[] { "ComboBox", "ComboBoxItem", "ListBoxItem", "ToolTip", "ContextMenu", "MenuItem", "ScrollBar" })
+        {
+            var style = Regex.Match(app, $@"<Style TargetType=""{type}"">(?<body>.*?)</Style>", RegexOptions.Singleline);
+            Check($"{type} has an app-level style", style.Success);
+            Check($"{type} replaces the stock template",
+                style.Success && style.Groups["body"].Value.Contains(@"Property=""Template"""));
+        }
+
+        var textBox = Regex.Match(app, @"<Style TargetType=""TextBox"">(?<body>.*?)</Style>", RegexOptions.Singleline);
+        Check("text boxes use the dark right-click menu",
+            textBox.Success && textBox.Groups["body"].Value.Contains(@"Property=""ContextMenu"""));
+
+        var combo = Regex.Match(app, @"<Style TargetType=""ComboBox"">(?<body>.*?)</Style>", RegexOptions.Singleline);
+        Check("the combo box list is drawn on a dark surface",
+            combo.Success && combo.Groups["body"].Value.Contains("PART_Popup")
+                          && combo.Groups["body"].Value.Contains(@"Background=""{StaticResource PopupBg}"""));
+    }
+
+    /// <summary>
+    /// Power settings are not edited per profile any more: picking a profile on the Fan
+    /// curves tab applies its fixed preset, so the old editor must not come back.
+    /// </summary>
+    private static void PowerTabHasNoPerProfileEditor()
+    {
+        var (_, windows) = LoadXaml();
+        var main = windows.FirstOrDefault(w => w.Name == "MainWindow.xaml").Xaml;
+        if (main == null) { Check("MainWindow.xaml was found", false); return; }
+
+        foreach (var gone in new[] { "PerfModeBox", "CpuBoostBox", "GpuBoostBox", "FallbackModeBox",
+                                     "PowerPlanBox", "PowerOverlayBox", "ProfileRefreshBox", "ApplyProfilePower_Click" })
+            Check($"{gone} is gone from the window", !main.Contains(gone));
+
+        Check("the profile picker shows what a profile applies", main.Contains("ProfileSummaryText"));
     }
 
     private static (string? App, List<(string Name, string Xaml)> Windows) LoadXaml()

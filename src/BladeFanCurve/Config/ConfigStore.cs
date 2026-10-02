@@ -137,12 +137,12 @@ public static class ConfigStore
             Hardware.RazerPower.MinChargeLimit, Hardware.RazerPower.MaxChargeLimit);
 
         MigrateProfilePower(c);
+        MigrateToPowerPresets(c);
 
         foreach (var profile in c.Profiles)
         {
             profile.Power ??= new ProfilePower();
-            // 0 means "leave the refresh rate alone"; anything else must be plausible.
-            if (profile.Power.RefreshHz is not 0 and (< 24 or > 500)) profile.Power.RefreshHz = 0;
+            profile.Power.RefreshHz = SanitiseRefreshHz(profile.Power.RefreshHz);
         }
 
         foreach (var profile in c.Profiles)
@@ -172,10 +172,6 @@ public static class ConfigStore
         }
     }
 
-    /// <summary>
-    /// Accepts "#RRGGBB", "RRGGBB" or anything else and always returns a well-formed
-    /// "#RRGGBB", so a hand-edited config cannot produce an unparseable colour.
-    /// </summary>
     /// <summary>
     /// One-time upgrade for configs written before profiles carried power settings.
     /// A profile that still has an entirely empty power block and a name matching one
@@ -209,6 +205,35 @@ public static class ConfigStore
         c.Version = 3;
     }
 
+    /// <summary>
+    /// Version 4 gives the three shipped profiles fixed power presets: Silent runs
+    /// everything at its lowest, Balanced puts the CPU and GPU on High, Performance
+    /// takes everything to the maximum. The per-profile power editor that used to sit on
+    /// the Power tab is gone, so profiles under those names adopt their preset once,
+    /// replacing whatever they carried. Any other profile — one the user duplicated or
+    /// created — keeps exactly what it had. Keyed on the version so a later hand edit to
+    /// config.json is not undone at the next start.
+    /// </summary>
+    internal static void MigrateToPowerPresets(AppConfig c)
+    {
+        if (c.Version >= 4) return;
+
+        foreach (var profile in c.Profiles)
+        {
+            var preset = ProfilePower.PresetFor(profile.Name);
+            if (preset != null) profile.Power = preset;
+        }
+
+        c.Version = 4;
+    }
+
+    /// <summary>
+    /// 0 means "leave the refresh rate alone" and <see cref="ProfilePower.HighestRefreshRate"/>
+    /// "the panel's highest"; anything else must be a plausible rate or it is dropped to 0.
+    /// </summary>
+    internal static int SanitiseRefreshHz(int hz) =>
+        hz is 0 or ProfilePower.HighestRefreshRate or (>= 24 and <= 500) ? hz : 0;
+
     /// <summary>True when every field is still at "leave it alone".</summary>
     private static bool IsUntouched(ProfilePower p) =>
         string.IsNullOrEmpty(p.PerfMode)
@@ -219,6 +244,10 @@ public static class ConfigStore
         && string.IsNullOrEmpty(p.PowerOverlay)
         && p.RefreshHz == 0;
 
+    /// <summary>
+    /// Accepts "#RRGGBB", "RRGGBB" or anything else and always returns a well-formed
+    /// "#RRGGBB", so a hand-edited config cannot produce an unparseable colour.
+    /// </summary>
     private static string NormaliseHex(string? value, string fallback)
     {
         if (string.IsNullOrWhiteSpace(value)) return fallback;
