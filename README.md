@@ -11,6 +11,9 @@ Built for a **Razer Blade 14 (2024) — RZ09-0508, USB `1532:02B6`**, and tuned 
 its Ryzen 9 8945HS and RTX 40-series GPU. Device discovery is model-agnostic, so
 other Blades should work too.
 
+<img width="1280" height="761" alt="image" src="https://github.com/user-attachments/assets/dc722f74-2c7a-4b23-ba5f-b219e7687797" />
+
+
 ---
 
 ## What it does
