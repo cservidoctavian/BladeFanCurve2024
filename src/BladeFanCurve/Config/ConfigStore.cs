@@ -138,6 +138,7 @@ public static class ConfigStore
 
         MigrateProfilePower(c);
         MigrateToPowerPresets(c);
+        MigrateSilentRefreshRate(c);
 
         foreach (var profile in c.Profiles)
         {
@@ -225,6 +226,28 @@ public static class ConfigStore
         }
 
         c.Version = 4;
+    }
+
+    /// <summary>
+    /// Version 5 stops Silent from touching the refresh rate. Its preset used to drop
+    /// the panel to 60 Hz — every time it was picked, and every time the charger came
+    /// out — and it now leaves the panel on whatever rate it is already running. A
+    /// Silent profile still carrying the old preset's 60 Hz is moved to "leave it
+    /// alone"; any other rate on it was put there by hand and is kept, and every other
+    /// profile, including one duplicated from Silent, keeps exactly what it had. Keyed
+    /// on the version so a later hand edit is not undone at the next start.
+    /// </summary>
+    internal static void MigrateSilentRefreshRate(AppConfig c)
+    {
+        if (c.Version >= 5) return;
+
+        foreach (var profile in c.Profiles)
+        {
+            if (profile.Name == "Silent" && profile.Power is { RefreshHz: 60 })
+                profile.Power.RefreshHz = 0;
+        }
+
+        c.Version = 5;
     }
 
     /// <summary>

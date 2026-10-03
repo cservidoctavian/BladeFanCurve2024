@@ -125,7 +125,11 @@ public sealed class ProfilePower
     // do exist belong to the named modes used as fallbacks — Balanced runs a 35 W CPU
     // target, Gaming 55 W — for firmware that has no level commands.
 
-    /// <summary>Lowest power everywhere: both chips on Low, power saver, efficiency, 60 Hz.</summary>
+    /// <summary>
+    /// Lowest power everywhere: both chips on Low, power saver, efficiency. The refresh
+    /// rate is left at whatever the panel is already running — selecting Silent, by
+    /// hand or by pulling the charger, does not drop it to 60 Hz.
+    /// </summary>
     public static ProfilePower SilentPreset() => new()
     {
         PerfMode = "Custom",
@@ -134,12 +138,12 @@ public sealed class ProfilePower
         GpuBoost = "Low",
         WindowsPlan = PowerSaverPlan,
         PowerOverlay = "efficiency",
-        RefreshHz = 60,
+        RefreshHz = 0, // leave the current refresh rate alone
     };
 
     /// <summary>
-    /// The 35 W-class CPU target with the CPU level on High, and the GPU on High. The
-    /// panel goes back to its top refresh rate, since Silent is what dropped it.
+    /// The 35 W-class CPU target with the CPU level on High, and the GPU on High, with
+    /// the panel on its top refresh rate.
     /// </summary>
     public static ProfilePower BalancedPreset() => new()
     {
@@ -400,10 +404,11 @@ public sealed class LightingSettings
 public sealed class AppConfig
 {
     /// <summary>
+    /// 5: Silent leaves the refresh rate alone instead of dropping it to 60 Hz.
     /// 4: the shipped profiles carry fixed power presets (see <see cref="ProfilePower"/>).
     /// 3: profiles carry power settings at all.
     /// </summary>
-    public int Version { get; set; } = 4;
+    public int Version { get; set; } = 5;
     public bool Enabled { get; set; } = true;
     public bool StartMinimized { get; set; } = true;
     public string ActiveProfile { get; set; } = "Balanced";
@@ -434,9 +439,8 @@ public sealed class AppConfig
         {
             new Profile
             {
-                // Quiet and cool: lowest CPU and GPU power, the power-saver plan, and
-                // 60 Hz, which on a 240 Hz panel is a larger battery saving than anything
-                // else here.
+                // Quiet and cool: lowest CPU and GPU power and the power-saver plan. The
+                // refresh rate is left wherever it already is.
                 Power = ProfilePower.SilentPreset(),
                 Name = "Silent",
                 CpuFan = new FanCurveConfig

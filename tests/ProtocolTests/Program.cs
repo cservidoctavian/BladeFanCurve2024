@@ -101,6 +101,7 @@ internal static class Program
         ShippedProfilesUseTheFixedPresets();
         PresetsAreOnlyForTheShippedNames();
         UpgradeMovesShippedProfilesOntoThePresets();
+        UpgradeStopsSilentChangingTheRefreshRate();
         TheTopRefreshRateSurvivesSanitising();
         PresetsDescribeThemselves();
 
@@ -820,10 +821,10 @@ internal static class Program
         Check("performance falls back to the high power target", turbo.Power.FallbackPerfMode == "Gaming");
         Check("silent biases toward efficiency", silent.Power.PowerOverlay == "efficiency");
         Check("performance biases toward performance", turbo.Power.PowerOverlay == "performance");
-        Check("silent drops the refresh rate", silent.Power.RefreshHz == 60);
+        Check("silent leaves the refresh rate alone", silent.Power.RefreshHz == 0);
         Check("performance takes the panel's top refresh rate",
             turbo.Power.RefreshHz == ProfilePower.HighestRefreshRate);
-        Check("balanced puts the refresh rate back after silent",
+        Check("balanced takes the panel's top refresh rate",
             cfg.Profiles.First(p => p.Name == "Balanced").Power.RefreshHz == ProfilePower.HighestRefreshRate);
 
         foreach (var p in cfg.Profiles)
@@ -1067,7 +1068,7 @@ internal static class Program
     private static void ShippedProfilesUseTheFixedPresets()
     {
         var cfg = AppConfig.CreateDefault();
-        Check("a new config starts at the preset version", cfg.Version == 4);
+        Check("a new config starts at the latest version", cfg.Version == 5);
 
         foreach (var name in new[] { "Silent", "Balanced", "Performance" })
             Check($"{name} ships with its preset",
@@ -1078,6 +1079,7 @@ internal static class Program
         Check("silent: gpu low", silent.GpuBoost == "Low");
         Check("silent: power saver plan", silent.WindowsPlan == "a1841308-3541-4fab-bc81-f71556f20b4a");
         Check("silent: best efficiency", silent.PowerOverlay == "efficiency");
+        Check("silent: refresh rate left alone", silent.RefreshHz == 0);
 
         var balanced = ProfilePower.BalancedPreset();
         Check("balanced: custom mode so the levels count", balanced.PerfMode == "Custom");
@@ -1167,6 +1169,74 @@ internal static class Program
         Check("a version 2 config ends at version 4", v2.Version == 4);
     }
 
+    /// <summary>
+    /// Selecting Silent used to drop the panel to 60 Hz. It now leaves the refresh rate
+    /// where it is, and the upgrade carries a saved Silent profile across once — without
+    /// touching a rate set by hand, or any other profile.
+    /// </summary>
+    private static void UpgradeStopsSilentChangingTheRefreshRate()
+    {
+        var v4 = new AppConfig
+        {
+            Version = 4,
+            ActiveProfile = "Silent",
+            Profiles =
+            {
+                new Profile { Name = "Silent", Power = new ProfilePower { CpuBoost = "Low", RefreshHz = 60 } },
+                new Profile { Name = "Balanced", Power = ProfilePower.BalancedPreset() },
+                new Profile { Name = "Silent copy", Power = new ProfilePower { CpuBoost = "Low", RefreshHz = 60 } },
+            }
+        };
+
+        ConfigStore.MigrateSilentRefreshRate(v4);
+
+        var silent = v4.Profiles.First(p => p.Name == "Silent").Power;
+        Check("upgrade stops silent changing the refresh rate", silent.RefreshHz == 0);
+        Check("upgrade keeps the rest of silent", silent.CpuBoost == "Low");
+        Check("upgrade leaves balanced on the top rate",
+            v4.Profiles.First(p => p.Name == "Balanced").Power.RefreshHz == ProfilePower.HighestRefreshRate);
+        Check("upgrade leaves a duplicated profile alone",
+            v4.Profiles.First(p => p.Name == "Silent copy").Power.RefreshHz == 60);
+        Check("upgrade stamps version 5", v4.Version == 5);
+
+        // A later hand edit must survive the next start.
+        silent.RefreshHz = 60;
+        ConfigStore.MigrateSilentRefreshRate(v4);
+        Check("upgrade does not run twice", silent.RefreshHz == 60);
+
+        // Any rate other than the old preset's was chosen deliberately.
+        var tuned = new AppConfig
+        {
+            Version = 4,
+            Profiles = { new Profile { Name = "Silent", Power = new ProfilePower { RefreshHz = 120 } } }
+        };
+        ConfigStore.MigrateSilentRefreshRate(tuned);
+        Check("upgrade keeps a hand-picked silent rate", tuned.Profiles[0].Power.RefreshHz == 120);
+
+        // A hand-edited config can carry a null power block. That must not throw, or
+        // loading would fall back to the defaults and lose the whole config.
+        var broken = new AppConfig
+        {
+            Version = 4,
+            Profiles = { new Profile { Name = "Silent", Power = null! } }
+        };
+        ConfigStore.MigrateSilentRefreshRate(broken);
+        Check("a missing power block does not stop the upgrade", broken.Version == 5);
+
+        // A very old config goes through every step and lands in the same place.
+        var v2 = new AppConfig
+        {
+            Version = 2,
+            Profiles = { new Profile { Name = "Silent", Power = new ProfilePower() } }
+        };
+        ConfigStore.MigrateProfilePower(v2);
+        ConfigStore.MigrateToPowerPresets(v2);
+        ConfigStore.MigrateSilentRefreshRate(v2);
+        Check("a version 2 silent ends up on the current preset",
+            SameAs(v2.Profiles[0].Power, ProfilePower.SilentPreset()));
+        Check("a version 2 config ends at version 5", v2.Version == 5);
+    }
+
     private static void TheTopRefreshRateSurvivesSanitising()
     {
         Check("'top Hz' is kept", ConfigStore.SanitiseRefreshHz(ProfilePower.HighestRefreshRate)
@@ -1183,7 +1253,8 @@ internal static class Program
     {
         var silent = ProfilePower.SilentPreset().Describe();
         Check("silent summary names the levels", silent.Contains("CPU low") && silent.Contains("GPU low"));
-        Check("silent summary names the plan and rate", silent.Contains("power saver") && silent.Contains("60 Hz"));
+        Check("silent summary names the plan", silent.Contains("power saver"));
+        Check("silent summary claims no refresh rate", !silent.Contains("Hz"));
 
         var balanced = ProfilePower.BalancedPreset().Describe();
         Check("balanced summary names the levels", balanced.Contains("CPU high") && balanced.Contains("GPU high"));

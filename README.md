@@ -11,9 +11,6 @@ Built for a **Razer Blade 14 (2024) — RZ09-0508, USB `1532:02B6`**, and tuned 
 its Ryzen 9 8945HS and RTX 40-series GPU. Device discovery is model-agnostic, so
 other Blades should work too.
 
-<img width="1280" height="761" alt="image" src="https://github.com/user-attachments/assets/dc722f74-2c7a-4b23-ba5f-b219e7687797" />
-
-
 ---
 
 ## What it does
@@ -252,10 +249,8 @@ floor is a genuinely lower-margin setting than 2000. That is the trade for silen
 ## On battery
 
 Pull the charger out and the app switches to the **Silent** profile — which drops the
-CPU and GPU power levels, moves Windows to the power-saver plan, and takes the panel
-to 60 Hz. Plug back in and it returns to whatever was active before — and since
-Balanced and Performance restore the panel's top refresh rate, the screen comes back
-from 60 Hz with it.
+CPU and GPU power levels and moves Windows to the power-saver plan, but leaves the
+refresh rate where it is. Plug back in and it returns to whatever was active before.
 
 Both halves can be turned off separately, and the battery profile is a dropdown, so
 "Silent" is a default rather than a rule.
@@ -345,7 +340,7 @@ and the power settings are one switch, not two.
 | If Custom unavailable | Balanced (35 W) | Balanced (35 W) | Gaming (55 W) |
 | Windows plan | Power saver | Balanced | High performance |
 | Power mode | Best efficiency | Recommended | Best performance |
-| Refresh rate | 60 Hz | panel maximum | panel maximum |
+| Refresh rate | left as it is | panel maximum | panel maximum |
 
 The line beside the profile picker says what the selected profile applies; hover it to
 see what the last switch actually did, including anything the controller refused.
@@ -370,10 +365,12 @@ Gaming runs 55 W, which is why those are the fallbacks for Balanced and Performa
 Real PL1/PL2 control needs a ring-0 driver, the same thing Memory Integrity blocks
 for CPU temperature, so it is not offered here.
 
-**Refresh rate.** Dropping to 60 Hz in the Silent profile is worth more battery than
-any of the rest of this on a 240 Hz panel. Balanced and Performance put the panel
-back on its highest rate at the current resolution, so leaving Silent — by hand or by
-plugging the charger back in — never strands the screen at 60 Hz.
+**Refresh rate.** Silent leaves the refresh rate alone: selecting it — by hand or by
+pulling the charger — keeps the panel on whatever rate it is already running. Earlier
+versions dropped it to 60 Hz; upgrading takes that off Silent once, though a profile
+duplicated from the old Silent keeps it. Balanced and Performance put the panel on its
+highest rate at the current resolution. For a lower rate on battery, set it on the
+**Power** tab — Silent will not undo it.
 
 ---
 
@@ -615,7 +612,7 @@ dotnet publish src\BladeFanCurve -c Release -o publish
 dotnet run --project tests\ProtocolTests -c Release
 ```
 
-The test suite is 321 checks over the report encoding, the CRC, curve
+The test suite is 406 checks over the report encoding, the CRC, curve
 interpolation, the safety clamps, the model table, the HID access strategy and the
 sensor fallback logic, plus guards on the build settings WPF cannot run under and on every XAML style
 being applied to a compatible element type.
@@ -640,7 +637,7 @@ src/BladeFanCurve/
   Config/       AppConfig.cs, ConfigStore.cs           JSON settings with clamping
   UI/           CurveEditor.cs, TrayManager.cs         curve editor, tray icon
   MainWindow.xaml(.cs), App.xaml(.cs)
-tests/ProtocolTests/                                   321 checks, no hardware needed
+tests/ProtocolTests/                                   406 checks, no hardware needed
 install/                                               logon task scripts
 ```
 
